@@ -108,3 +108,53 @@ def extract_code(text: str) -> str:
     if m:
         return m.group(1).strip()
     return text.strip()
+
+
+SAFETY_MODEL = os.environ.get("SAFETY_MODEL", "nemotron-3.5-content-safety")
+
+
+async def safety_check(text: str) -> dict:
+    """Classify text with the Nemotron content-safety model.
+
+    Returns {status: safe|unsafe|unavailable, categories, model, latency_s, raw}.
+    Never raises: the guard must degrade to heuristics, not block the app.
+    """
+    start = time.monotonic()
+    out = {"status": "unavailable", "categories": [], "model": SAFETY_MODEL, "latency_s": 0, "raw": ""}
+    if not API_KEY:
+        return out
+    try:
+        r = await _client.post(
+            f"{BASE_URL}/chat/completions",
+            headers={"Authorization": f"Bearer {API_KEY}"},
+            json={"model": SAFETY_MODEL, "max_tokens": 300, "temperature": 0,
+                  "messages": [{"role": "user", "content": text[:6000]}]},
+            timeout=25,
+        )
+        out["latency_s"] = round(time.monotonic() - start, 2)
+        if r.status_code != 200:
+            out["raw"] = f"HTTP {r.status_code}"
+            return out
+        msg = r.json()["choices"][0]["message"]
+        raw = strip_thinking(msg.get("content") or "") or (msg.get("reasoning_content") or "")
+        out["raw"] = raw[:400]
+        low = raw.lower()
+        verdict = None
+        try:  # NemoGuard-style JSON: {"User Safety": "unsafe", "Safety Categories": "..."}
+            data = json.loads(raw[raw.index("{"): raw.rindex("}") + 1])
+            for k, v in data.items():
+                if "safety" in k.lower() and "categor" not in k.lower() and isinstance(v, str):
+                    verdict = v.strip().lower()
+                if "categor" in k.lower() and v:
+                    out["categories"] = [c.strip() for c in str(v).split(",") if c.strip()]
+        except (ValueError, AttributeError):
+            pass
+        if verdict is None:
+            verdict = "unsafe" if re.search(r"\bunsafe\b", low) else ("safe" if re.search(r"\bsafe\b", low) else None)
+        if verdict in ("safe", "unsafe"):
+            out["status"] = verdict
+        return out
+    except Exception as e:  # noqa: BLE001
+        out["raw"] = f"{type(e).__name__}"
+        out["latency_s"] = round(time.monotonic() - start, 2)
+        return out

@@ -6,6 +6,7 @@ dispatches it to the sandbox runner on the executor VM over the Vultr VPC,
 self-heals on errors, and explains only numbers that real execution printed.
 """
 
+import asyncio
 import base64
 import hashlib
 import json
@@ -22,6 +23,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+import guard
 import llm
 import prompts
 
@@ -32,6 +34,7 @@ MAX_ATTEMPTS = int(os.environ.get("MAX_ATTEMPTS", "3"))
 RUN_TIMEOUT_S = int(os.environ.get("RUN_TIMEOUT_S", "30"))
 RUN_MEMORY_MB = int(os.environ.get("RUN_MEMORY_MB", "512"))
 RATE_LIMIT_PER_HOUR = int(os.environ.get("RATE_LIMIT_PER_HOUR", "40"))
+APPROVAL_TIMEOUT_S = int(os.environ.get("APPROVAL_TIMEOUT_S", "600"))
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 ALLOWED_EXT = (".csv", ".tsv", ".txt", ".xlsx", ".xls", ".json")
 
@@ -42,6 +45,7 @@ app = FastAPI(title="Receipts")
 _runner = httpx.AsyncClient(timeout=httpx.Timeout(RUN_TIMEOUT_S + 30, connect=5))
 _hits: dict[str, deque] = defaultdict(deque)
 DATASETS: dict[str, dict] = {}
+APPROVALS: dict[str, dict] = {}
 
 
 # ---------- helpers ----------
@@ -88,8 +92,9 @@ def dataset_files(ds: dict) -> list[dict]:
     return [{"name": ds["filename"], "content_b64": base64.b64encode(ds["path"].read_bytes()).decode()}]
 
 
-def receipt(code: str, result: dict, model: str | None) -> dict:
+def receipt(code: str, result: dict, model: str | None, preflight: dict | None = None) -> dict:
     return {
+        "preflight": preflight,
         "job_id": result["job_id"],
         "model": model,
         "code_sha256": sha256(code.encode()),
@@ -148,10 +153,12 @@ async def _register(filename: str, data: bytes) -> dict:
         ds["profile"] = json.loads(result["stdout"].strip().splitlines()[-1])
     except Exception:  # noqa: BLE001
         raise HTTPException(400, "Could not profile file")
+    ds["suspicious"] = ds["profile"].pop("suspicious_cells", [])
     DATASETS[ds_id] = ds
     return {"dataset_id": ds_id, "filename": filename, "size": len(data), "sha256": ds["sha256"],
             "profile": ds["profile"], "profiling_receipt": receipt(code, result, None),
-            "profiling_events": result["events"], "limits": result["limits"]}
+            "profiling_events": result["events"], "limits": result["limits"],
+            "data_scan": {"flagged": len(ds["suspicious"]), "cells": ds["suspicious"][:5]}}
 
 
 @app.post("/api/datasets")
@@ -180,8 +187,34 @@ class Ask(BaseModel):
     question: str = Field(..., min_length=3, max_length=1000)
 
 
+class Decision(BaseModel):
+    decision: str = Field(..., pattern="^(approve|reject)$")
+
+
 def sse(event: dict) -> str:
     return f"data: {json.dumps(event)}\n\n"
+
+
+@app.post("/api/approvals/{approval_id}")
+async def decide(approval_id: str, body: Decision):
+    a = APPROVALS.get(approval_id)
+    if not a or a["event"].is_set():
+        raise HTTPException(404, "No pending approval with that id")
+    a["decision"] = body.decision
+    a["event"].set()
+    return {"ok": True, "decision": body.decision}
+
+
+async def _wait_for_decision(approval_id: str):
+    """Hold the stream open (with keep-alives) until a human decides or time runs out."""
+    a = APPROVALS[approval_id]
+    waited = 0
+    while not a["event"].is_set() and waited < APPROVAL_TIMEOUT_S:
+        try:
+            await asyncio.wait_for(a["event"].wait(), 15)
+        except asyncio.TimeoutError:
+            waited += 15
+            yield ": keep-alive\n\n"
 
 
 @app.post("/api/ask")
@@ -193,7 +226,19 @@ async def ask(body: Ask, request: Request):
 
     async def stream():
         started = time.monotonic()
+        data_flags = ds.get("suspicious", [])
         try:
+            # 0. Pre-flight: question and data, before any model writes code
+            yield sse({"type": "step", "id": "guard-q", "status": "running", "title": "Pre-flight: checking your question"})
+            q_flags = guard.question_heuristics(body.question)
+            safety = await llm.safety_check(body.question)
+            q_safety = {k: safety[k] for k in ("status", "categories", "model", "latency_s")}
+            q_risky = bool(q_flags) or safety["status"] == "unsafe"
+            yield sse({"type": "preflight", "stage": "question", "risky": q_risky,
+                       "flags": q_flags, "safety": q_safety})
+            if data_flags:
+                yield sse({"type": "preflight", "stage": "data", "risky": True, "cells": data_flags[:5]})
+
             # 1. Plan
             yield sse({"type": "step", "id": "plan", "status": "running", "title": "Planning"})
             plan = await llm.chat(prompts.plan_messages(body.question, ds["filename"], ds["profile"]),
@@ -201,10 +246,11 @@ async def ask(body: Ask, request: Request):
             yield sse({"type": "step", "id": "plan", "status": "done", "title": "Plan",
                        "content": plan["text"], "model": plan["model"], "latency_s": plan["latency_s"]})
 
-            # 2. Code -> run -> self-heal
+            # 2. Code -> pre-flight scan -> (approval) -> run -> self-heal
             messages = prompts.code_messages(body.question, ds["filename"], ds["profile"], plan["text"],
                                              RUN_TIMEOUT_S, RUN_MEMORY_MB)
-            result, code, model = None, "", None
+            messages[0]["content"] += guard.summarise_data_flags(data_flags)
+            result, code, model, last_decision = None, "", None, None
             for attempt in range(1, MAX_ATTEMPTS + 1):
                 yield sse({"type": "step", "id": f"code{attempt}", "status": "running",
                            "title": "Writing code" if attempt == 1 else f"Fixing code (attempt {attempt})"})
@@ -212,6 +258,34 @@ async def ask(body: Ask, request: Request):
                 code, model = llm.extract_code(reply["text"]), reply["model"]
                 yield sse({"type": "code", "attempt": attempt, "code": code, "model": model,
                            "latency_s": reply["latency_s"]})
+
+                findings = guard.scan_code(code)
+                blocking = [f for f in findings if f["severity"] == "block"]
+                yield sse({"type": "preflight", "stage": "code", "attempt": attempt,
+                           "risky": bool(blocking), "findings": findings})
+                preflight = {"question": q_safety["status"], "question_flags": len(q_flags),
+                             "data_flags": len(data_flags), "code_findings": len(blocking),
+                             "approval": "not needed"}
+
+                if blocking:
+                    aid = uuid.uuid4().hex
+                    APPROVALS[aid] = {"event": asyncio.Event(), "decision": None}
+                    yield sse({"type": "approval", "id": aid, "attempt": attempt, "findings": blocking,
+                               "timeout_s": APPROVAL_TIMEOUT_S})
+                    async for keep_alive in _wait_for_decision(aid):
+                        yield keep_alive
+                    last_decision = APPROVALS.pop(aid, {}).get("decision") or "timeout"
+                    preflight["approval"] = {"approve": "approved by you"}.get(last_decision, last_decision)
+                    yield sse({"type": "approval_result", "id": aid, "attempt": attempt,
+                               "decision": last_decision, "findings": len(blocking)})
+                    if last_decision != "approve":
+                        if attempt < MAX_ATTEMPTS:
+                            messages = messages + [
+                                {"role": "assistant", "content": f"```python\n{code}\n```"},
+                                {"role": "user", "content": prompts.REJECTED_NOTE.format(
+                                    findings="; ".join(f["detail"] for f in blocking))},
+                            ]
+                        continue
 
                 yield sse({"type": "step", "id": f"run{attempt}", "status": "running",
                            "title": "Running in sandbox"})
@@ -227,7 +301,7 @@ async def ask(body: Ask, request: Request):
                                       ("job_id", "status", "exit_code", "duration_s",
                                        "stdout", "stderr", "events", "limits")},
                            "outputs": public_outputs(result),
-                           "receipt": receipt(code, result, model)})
+                           "receipt": receipt(code, result, model, preflight)})
                 if result["status"] == "ok":
                     break
                 if attempt < MAX_ATTEMPTS:
@@ -250,11 +324,16 @@ async def ask(body: Ask, request: Request):
                                                               result["outputs"]), max_tokens=3000)
                 yield sse({"type": "answer", "markdown": ans["text"], "model": ans["model"],
                            "grounded_in_job": result["job_id"]})
+            elif result is None:
+                yield sse({"type": "answer", "markdown":
+                           "Nothing was run. Every version of the code needed access this task never needs "
+                           "(network, secrets, processes or system files), and it was not approved.",
+                           "model": None, "grounded_in_job": None})
             else:
                 yield sse({"type": "answer", "markdown":
-                           f"The agent could not produce working code in {MAX_ATTEMPTS} sandboxed attempts. "
+                           f"The agent could not produce working code in {MAX_ATTEMPTS} attempts. "
                            "Every attempt is shown above with its real error.", "model": None,
-                           "grounded_in_job": result["job_id"] if result else None})
+                           "grounded_in_job": result["job_id"]})
             yield sse({"type": "done", "total_s": round(time.monotonic() - started, 2)})
         except Exception as e:  # noqa: BLE001
             yield sse({"type": "error", "message": f"{type(e).__name__}: {str(e)[:300]}"})

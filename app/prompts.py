@@ -111,5 +111,36 @@ for c, t in df.dtypes.items():
     if pd.api.types.is_numeric_dtype(s) and s.notna().any():
         col["min"] = float(s.min()); col["max"] = float(s.max())
     cols.append(col)
-print(json.dumps({{"rows": int(len(df)), "columns": cols}}))
+
+# Pre-flight data scan: find cells that talk to an AI instead of describing data.
+import re
+PATTERNS = {{
+    "instruction override": r"ignore (all |the |any )?(previous |prior |above |user'?s? )?(instructions|question|prompt)",
+    "addresses the AI": r"(system (note|prompt|message)|note to (the )?ai|ai (analyst|assistant|agent)|you are (now )?an? )",
+    "secret access": r"(environment variable|os\\.environ|api[_ -]?key|password|token|credential)",
+    "system files": r"(/etc/passwd|/etc/shadow|/proc/|\\.ssh|169\\.254\\.169\\.254)",
+    "data exfiltration": r"(upload|exfiltrat|send (it|them|this|the data)|post (it|them) to|webhook)",
+    "network address": r"https?://",
+    "concealment": r"(do not (mention|tell|reveal)|silently|without (telling|mentioning))",
+}}
+first = df.columns[0]
+flags = []
+for c in df.columns:
+    s = df[c]
+    if s.dtype.kind not in "OSU" and str(s.dtype) not in ("str", "string"):
+        continue
+    for i, v in s.dropna().astype(str).items():
+        hits = [k for k, p in PATTERNS.items() if re.search(p, v, re.I)]
+        if len(hits) >= 2 or "instruction override" in hits:
+            flags.append({{"row": int(i) + 2, "id": str(df.at[i, first])[:40], "column": str(c),
+                          "text": v[:300], "matched": hits}})
+        if len(flags) >= 10:
+            break
+print(json.dumps({{"rows": int(len(df)), "columns": cols, "suspicious_cells": flags}}))
 """
+
+REJECTED_NOTE = """A human REJECTED this script before it ran, because the pre-flight scan found:
+{findings}
+The task never needs network access, environment variables, processes or system files.
+Rewrite the full script to answer the question using only the given file with pandas,
+numpy and matplotlib. Return it in a single ```python block."""

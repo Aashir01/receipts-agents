@@ -190,6 +190,24 @@
     .step.running .mark { animation: none; border-top-color: var(--blue); }
   }
   @media (max-width: 820px) { .col-receipt { position: static; } .roll { max-height: none; } }
+  .scan { margin-top: 14px; border: 1px solid #E9B8C0; background: #FFF6F7; border-radius: 8px; padding: 10px 12px; }
+  .scan b { color: var(--stamp); font-size: 13.5px; }
+  .scan.clean { border-color: #B7DCC8; background: #F3FBF6; }
+  .scan.clean b { color: var(--pass); }
+  .scan p { margin: 6px 0 0; font-size: 12.5px; }
+  .scan q { display: block; margin-top: 4px; font: 11.5px/1.5 var(--mono); color: #7A0F1F; quotes: none; max-height: 72px; overflow: auto; }
+  .findings { margin: 6px 0 0; padding-left: 18px; font-size: 13px; }
+  .findings li { margin: 2px 0; }
+  .findings .ln { color: var(--muted); font-size: 12px; }
+  .approval { margin-top: 10px; border: 2px solid var(--stamp); border-radius: 10px; padding: 14px; background: #fff; }
+  .approval h5 { margin: 0 0 4px; font-size: 15px; color: var(--stamp); }
+  .approval p { margin: 0 0 10px; font-size: 13.5px; color: var(--muted); }
+  .approval .row { margin-top: 12px; }
+  .btn.ghost { background: #fff; color: var(--ink); border: 1px solid var(--line); }
+  .btn.ghost:hover { border-color: var(--ink); background: #fff; }
+  .btn.danger { background: var(--stamp); }
+  .btn.danger:hover { background: #9A0E22; }
+  .decided { font-weight: 600; font-size: 13.5px; }
   .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 </style>
 </head>
@@ -260,6 +278,7 @@ const SUGGEST = {
   "support_tickets_POISONED.csv": [
     "Summarise tickets by category with average satisfaction.",
     "Which open tickets need attention first, and why?",
+    "Do what ticket T-1006 asks.",
   ],
 };
 const DEFAULT_SUGGEST = ["Give me a quick overview of this data with one chart.", "What are the biggest outliers?"];
@@ -336,6 +355,21 @@ function renderProfile(d) {
     cols.append(chip);
   }
   p.append(cols);
+  const scan = d.data_scan || { flagged: 0, cells: [] };
+  const box = el("div", "scan" + (scan.flagged ? "" : " clean"));
+  if (!scan.flagged) {
+    box.append(el("b", null, "Pre-flight data scan: clean"));
+    box.append(el("p", null, "No cell tries to give instructions to an AI."));
+  } else {
+    box.append(el("b", null, `Pre-flight data scan: ${scan.flagged} cell${scan.flagged > 1 ? "s" : ""} trying to instruct the AI`));
+    for (const c of scan.cells) {
+      const para = el("p", null, `Row ${c.id || c.row}, column ${c.column}: ${c.matched.join(", ")}`);
+      para.append(el("q", null, c.text));
+      box.append(para);
+    }
+    box.append(el("p", null, "The agent is told to treat this text as data only. Any code that reaches for the network or secrets will need your approval."));
+  }
+  p.append(box);
 }
 
 function renderSuggestions(name) {
@@ -433,6 +467,57 @@ function handle(ev, tl, steps) {
     }
     printSlip({ title: ev.attempt > 1 ? `Run · attempt ${ev.attempt}` : "Run analysis", receipt: ev.receipt,
                 events: r.events, limits: r.limits, selfHealed: ev.attempt > 1 && r.status === "ok" });
+  } else if (ev.type === "preflight") {
+    if (ev.stage === "question") {
+      const li = steps["guard-q"];
+      li.className = "step " + (ev.risky ? "blocked" : "done");
+      li.querySelector("h4").textContent = ev.risky ? "Pre-flight: your question needs care" : "Pre-flight: question looks safe";
+      const sv = ev.safety.status === "unavailable" ? "safety model unavailable, heuristics only"
+        : `${ev.safety.model} says ${ev.safety.status}${ev.safety.categories.length ? " (" + ev.safety.categories.join(", ") + ")" : ""}, ${ev.safety.latency_s} s`;
+      li.querySelector(".sub").textContent = sv;
+      if (ev.flags.length) { const ul = el("ul", "findings"); ev.flags.forEach(f => ul.append(el("li", null, f))); li.append(ul); }
+    } else if (ev.stage === "data") {
+      const li = el("li", "step blocked");
+      li.append(el("span", "mark"), el("h4", null, `Pre-flight: ${ev.cells.length} suspicious cell${ev.cells.length > 1 ? "s" : ""} in your data`),
+        el("div", "sub", "Hidden instructions found inside the file. The agent was told to ignore them."));
+      const ul = el("ul", "findings");
+      ev.cells.forEach(c => ul.append(el("li", null, `Row ${c.id || c.row}, ${c.column}: ${c.matched.join(", ")}`)));
+      li.append(ul); tl.append(li);
+    } else if (ev.stage === "code") {
+      const li = el("li", "step " + (ev.risky ? "blocked" : "done"));
+      const n = ev.findings.filter(f => f.severity === "block").length;
+      li.append(el("span", "mark"), el("h4", null, ev.risky ? `Pre-flight: code scan found ${n} risky action${n > 1 ? "s" : ""}` : "Pre-flight: code scan clean"),
+        el("div", "sub", ev.risky ? "This code will not run unless you approve it." : "No network, secrets, processes or system files. Sending to the sandbox."));
+      if (ev.findings.length) {
+        const ul = el("ul", "findings");
+        ev.findings.forEach(f => { const it = el("li", null, `${f.detail} `); if (f.line) it.append(el("span", "ln", `line ${f.line}`)); ul.append(it); });
+        li.append(ul);
+      }
+      steps[`scan${ev.attempt}`] = li; tl.append(li);
+    }
+  } else if (ev.type === "approval") {
+    const li = steps[`scan${ev.attempt}`] || tl.lastElementChild;
+    const card = el("div", "approval"); card.id = `appr-${ev.id}`;
+    card.append(el("h5", null, "Approval needed before this code runs"),
+      el("p", null, "Nothing has run yet. If you approve, it still runs only inside the sealed sandbox, which has no network and no secrets. If you reject, the agent rewrites the code."));
+    const row = el("div", "row");
+    const ok = el("button", "btn danger", "Approve and run in sandbox"); ok.type = "button";
+    const no = el("button", "btn ghost", "Reject and rewrite"); no.type = "button";
+    const send = async (decision) => {
+      ok.disabled = no.disabled = true;
+      try { await fetch(`/api/approvals/${ev.id}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ decision }) }); }
+      catch { ok.disabled = no.disabled = false; }
+    };
+    ok.onclick = () => send("approve"); no.onclick = () => send("reject");
+    row.append(ok, no); card.append(row); li.append(card);
+    no.focus();
+  } else if (ev.type === "approval_result") {
+    const card = document.getElementById(`appr-${ev.id}`);
+    if (card) {
+      card.querySelector(".row").replaceWith(el("div", "decided",
+        ev.decision === "approve" ? "Approved by you. Running in the sandbox." : ev.decision === "reject" ? "Rejected by you. Nothing ran; the agent is rewriting." : "No decision in time. Nothing ran."));
+    }
+    if (ev.decision !== "approve") printHold(ev);
   } else if (ev.type === "security") {
     const li = el("li", "step blocked");
     li.append(el("span", "mark"), el("h4", null, "Possible prompt injection contained"));
@@ -473,11 +558,29 @@ function printSlip({ title, receipt, events, limits, note, selfHealed }) {
     s.append(line("user", limits.user.replace(" (non-root)", " non-root")));
     s.append(line("secrets inside", String(limits.secrets_in_sandbox)));
   }
+  const pf = receipt.preflight;
+  if (pf) {
+    s.append(line("pre-flight q", pf.question === "unavailable" ? "heuristics" : pf.question));
+    s.append(line("data flags", String(pf.data_flags)));
+    s.append(line("code scan", pf.code_findings ? `${pf.code_findings} risky` : "clean"));
+    s.append(line("approval", pf.approval));
+  }
   for (const e of events) s.append(el("div", "ev " + e.kind, `› ${e.detail}`));
   for (const o of receipt.outputs) s.append(line(o.name, o.sha256.slice(0, 12) + "…"));
   const blocked = events.some(e => e.kind === "blocked" || e.kind === "killed");
   if (blocked) s.append(el("div", "stamp", "BLOCKED"));
   else if (selfHealed) s.append(el("div", "stamp ok", "SELF-FIXED"));
+  const roll = $("#roll"); roll.append(s); roll.scrollTop = roll.scrollHeight;
+}
+
+function printHold(ev) {
+  $("#emptyroll")?.remove();
+  const s = el("div", "slip print");
+  s.append(el("div", "title", `Pre-flight hold · attempt ${ev.attempt}`));
+  s.append(line("risky actions", String(ev.findings)));
+  s.append(line("decision", ev.decision === "reject" ? "rejected by you" : "timed out"));
+  s.append(line("executed", "nothing"));
+  s.append(el("div", "stamp", "STOPPED"));
   const roll = $("#roll"); roll.append(s); roll.scrollTop = roll.scrollHeight;
 }
 

@@ -38,12 +38,14 @@ flowchart LR
 
 **The agent loop** (streamed live to the UI):
 
-1. **Profile**: the uploaded file is opened *inside the sandbox* by fixed code. The web server never parses user files.
+1. **Profile and data scan**: the uploaded file is opened *inside the sandbox* by fixed code, which also flags cells that try to give instructions to an AI (prompt injection). The web server never parses user files.
+1. **Pre-flight question check**: `nemotron-3.5-content-safety` on Vultr Serverless Inference plus heuristics.
 2. **Plan**: the model writes a short plan from the file profile and the question.
 3. **Code**: the model writes one Python script.
-4. **Run**: the script is dispatched to the executor VM and runs in a fresh gVisor container.
-5. **Self-heal**: on failure, the real traceback goes back to the model, up to 3 attempts. If the sandbox *blocked* something, the model is told the action was forbidden and to ignore instructions hidden in the data.
-6. **Explain**: the model answers using only the printed output. The answer is tied to the job ID that produced it.
+4. **Pre-flight code scan**: the generated code is parsed (never executed) with Python's `ast`. Network, process, secret, dynamic-code and system-file access pause the run for **human approval**. Rejected code never runs; the model rewrites it.
+5. **Run**: the script is dispatched to the executor VM and runs in a fresh gVisor container.
+6. **Self-heal**: on failure, the real traceback goes back to the model, up to 3 attempts. If the sandbox *blocked* something, the model is told the action was forbidden and to ignore instructions hidden in the data.
+7. **Explain**: the model answers using only the printed output. The answer is tied to the job ID that produced it.
 
 Every run prints a **receipt**: job ID, model, SHA-256 of the exact code, exit code, duration, runtime, limits, containment events, and SHA-256 of every output file.
 
@@ -59,6 +61,7 @@ Every run prints a **receipt**: job ID, model, SHA-256 of the exact code, exit c
 | Least privilege | Non-root user, all capabilities dropped, `no-new-privileges`, read-only root filesystem, 64 MB tmpfs |
 | Lifecycle | One container per task, `--rm`, existence checked after every run, job folder deleted |
 | Network perimeter | Runner listens only on the private IP; host firewall allows only the app server's private IP; Vultr Firewall groups on both VMs |
+| Pre-flight guard | Sandbox-side data scan for injected instructions, Nemotron safety check on the question, static code scan, human approval for anything risky |
 | Abuse limits | Per-IP hourly rate limit, 10 MB uploads, output size caps |
 
 **Containment moment (shown in the demo video):** load *Poisoned support tickets*. One ticket contains hidden instructions telling the AI to read environment variables and `/etc/passwd` and upload them to an external server. If the model follows them, the upload fails because the sandbox has no network, the run is flagged and stamped BLOCKED, the environment shows zero secrets, and the agent retries with a security note and produces the honest summary.
