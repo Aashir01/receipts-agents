@@ -216,6 +216,12 @@ async def ask(body: Ask, request: Request):
                 yield sse({"type": "step", "id": f"run{attempt}", "status": "running",
                            "title": "Running in sandbox"})
                 result = await run_in_sandbox(code, dataset_files(ds))
+                if result["status"] == "ok" and not result["stdout"].strip() and not result["outputs"]:
+                    # A clean exit that printed nothing proves nothing: treat it as a failure.
+                    result["status"] = "no_output"
+                    result["stderr"] = ("The script exited without printing anything or saving files. "
+                                        "It probably defined functions without calling them. Run the "
+                                        "analysis at top level and print every result.")
                 yield sse({"type": "exec", "attempt": attempt,
                            "result": {k: result[k] for k in
                                       ("job_id", "status", "exit_code", "duration_s",
