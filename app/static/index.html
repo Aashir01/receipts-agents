@@ -240,6 +240,15 @@
   body.shared .col-data, body.shared .ask { display: none; }
   body.shared main { grid-template-columns: minmax(0, 1fr) minmax(300px, 360px); }
   @media (max-width: 820px) { body.shared main { grid-template-columns: 1fr; } }
+  .stagehead { list-style: none; margin: 2px 0 14px; padding: 8px 0 0 30px; border-top: 1px dashed var(--line); font-size: 13px; font-weight: 600; color: var(--blue-ink); }
+  .stagehead:first-child { border-top: 0; padding-top: 0; }
+  .vchecks { margin: 8px 0 0; border-collapse: collapse; font-size: 13px; width: 100%; }
+  .vchecks th, .vchecks td { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--line); font-variant-numeric: tabular-nums; }
+  .vchecks th { color: var(--muted); font-weight: 500; }
+  .vchecks td.ok { color: var(--pass); font-weight: 600; } .vchecks td.no { color: var(--stamp); font-weight: 600; }
+  .badge { display: inline-block; margin-top: 8px; padding: 3px 10px; border-radius: 999px; font-size: 12.5px; font-weight: 600; }
+  .badge.ok { background: #E6F4EC; color: var(--pass); } .badge.no { background: #FDECEE; color: var(--stamp); }
+  .badge.neutral { background: #EEF1F4; color: var(--muted); }
   .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 </style>
 </head>
@@ -286,6 +295,7 @@
       <div class="suggest" id="suggest"></div>
       <div class="row">
         <button class="btn" id="run" disabled>Run analysis</button>
+        <button class="btn ghost" id="stop" type="button" hidden>Stop</button>
         <span class="muted" id="runinfo"></span>
       </div>
     </section>
@@ -448,6 +458,11 @@ function setReady(on) {
 
 /* ---------- run ---------- */
 $("#run").onclick = run;
+$("#stop").onclick = async () => {
+  if (!currentRunId) return;
+  $("#stop").disabled = true; $("#stop").textContent = "Stopping…";
+  try { await api(`/api/runs/${currentRunId}/stop`, { method: "POST" }); } catch {}
+};
 $("#q").addEventListener("keydown", e => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) run(); });
 
 async function run() {
@@ -455,6 +470,7 @@ async function run() {
   if (!dataset || question.length < 3 || busy) return;
   busy = true; setReady(true); $("#run").textContent = "Running…";
   viewOnly = false; currentRunId = null; $("#banner").hidden = true;
+  const stopBtn = $("#stop"); stopBtn.hidden = false; stopBtn.disabled = false; stopBtn.textContent = "Stop";
   const tl = $("#timeline"); tl.replaceChildren();
   const steps = {};
   const t0 = performance.now();
@@ -480,6 +496,7 @@ async function run() {
     tl.append(el("li", "error", `Run stopped: ${e.message}`));
   } finally {
     clearInterval(tick); busy = false; $("#run").textContent = "Run analysis"; setReady(!!dataset);
+    $("#stop").hidden = true;
   }
 }
 
@@ -530,6 +547,45 @@ function handle(ev, tl, steps) {
     }
     printSlip({ title: ev.attempt > 1 ? `Run · attempt ${ev.attempt}` : "Run analysis", receipt: ev.receipt,
                 events: r.events, limits: r.limits, selfHealed: ev.attempt > 1 && r.status === "ok" });
+  } else if (ev.type === "stage") {
+    tl.append(el("li", "stagehead", ev.title));
+  } else if (ev.type === "explore") {
+    const li = el("li", "step " + (ev.status === "ok" ? "done" : ev.status === "skipped" ? "blocked" : "fail"));
+    li.append(el("span", "mark"), el("h4", null, ev.status === "ok" ? "Explored the data in the sandbox"
+      : ev.status === "skipped" ? "Exploration skipped" : "Exploration failed, continuing without it"));
+    li.append(el("div", "sub", ev.result ? `Job ${ev.result.job_id}, ${ev.result.duration_s} s, ${ev.model}` : (ev.reason || "")));
+    const d = el("details"); d.append(el("summary", null, "Show exploration code"), el("pre", null, ev.code)); li.append(d);
+    if (ev.result?.stdout?.trim()) { const o = el("details"); o.append(el("summary", null, "What it found"), el("pre", "out", ev.result.stdout)); li.append(o); }
+    tl.append(li);
+    if (ev.result) printSlip({ title: "Explore", receipt: ev.receipt, events: ev.result.events, limits: ev.result.limits });
+  } else if (ev.type === "verify") {
+    steps.verify?.remove();
+    const li = el("li", "step " + (ev.status === "verified" ? "done" : ev.status === "mismatch" ? "fail" : "blocked"));
+    li.append(el("span", "mark"), el("h4", null, ev.status === "verified" ? "Two-key verification: verified"
+      : ev.status === "mismatch" ? "Two-key verification: mismatch found" : "Two-key verification: inconclusive"));
+    li.append(el("div", "sub", ev.status === "verified"
+      ? "A second script, written separately without seeing the analysis, recomputed the headline numbers in a fresh sandbox and got the same values."
+      : ev.status === "mismatch" ? "An independent recomputation disagrees. The answer below flags it instead of presenting it as fact."
+      : (ev.reason || "The auditor could not produce comparable numbers.")));
+    if (ev.checks?.length) {
+      const t = el("table", "vchecks"); const hr = el("tr");
+      ["Number", "Analysis printed", "Auditor recomputed", ""].forEach(h => hr.append(el("th", null, h))); t.append(hr);
+      for (const c of ev.checks) {
+        const tr = el("tr");
+        tr.append(el("td", null, c.name.replaceAll("_", " ")), el("td", null, String(c.original)),
+          el("td", null, c.recomputed == null ? "missing" : String(Math.round(c.recomputed * 10000) / 10000)),
+          el("td", c.match ? "ok" : "no", c.match ? "match" : "differs"));
+        t.append(tr);
+      }
+      li.append(t);
+    }
+    if (ev.code) { const d = el("details"); d.append(el("summary", null, "Show the auditor's code"), el("pre", null, ev.code)); li.append(d); }
+    tl.append(li);
+    if (ev.result) printSlip({ title: "Verification", receipt: ev.receipt, events: ev.result.events, limits: ev.result.limits,
+      stamp: ev.status === "verified" ? ["VERIFIED", true] : ev.status === "mismatch" ? ["MISMATCH", false] : null });
+  } else if (ev.type === "stopped") {
+    tl.querySelectorAll(".step.running").forEach(n => n.className = "step fail");
+    const li = el("li", "step fail"); li.append(el("span", "mark"), el("h4", null, "Stopped"), el("div", "sub", ev.message)); tl.append(li);
   } else if (ev.type === "preflight") {
     if (ev.stage === "question") {
       const li = steps["guard-q"];
@@ -593,6 +649,9 @@ function handle(ev, tl, steps) {
     li.append(el("span", "mark"), el("h4", null, "Answer"));
     const box = el("div", "answer"); box.innerHTML = md(ev.markdown); li.append(box);
     if (ev.grounded_in_job) li.append(el("div", "grounded", `Every number above was printed by sandbox job ${ev.grounded_in_job}.`));
+    if (ev.verified === "verified") li.append(el("span", "badge ok", "Verified by an independent recomputation"));
+    else if (ev.verified === "mismatch") li.append(el("span", "badge no", "Independent recomputation disagrees"));
+    else if (ev.verified === "inconclusive") li.append(el("span", "badge neutral", "Verification inconclusive"));
     const acts = el("div", "actions");
     if (ev.receipt_id) {
       const b = el("button", "btn ghost", "Re-run this receipt"); b.type = "button";
@@ -665,6 +724,7 @@ function printTotal(total) {
   const slips = document.querySelectorAll(".slip").length;
   const t = el("div", "total");
   t.append(line("slips", String(slips)), line("total time", `${total} s`), line("containers left running", "0"));
+  if (total == null) t.lastElementChild.remove();
   $("#roll").append(t);
 }
 
@@ -760,7 +820,7 @@ async function loadStats() {
     const items = [["Sandbox jobs", st.sandbox_jobs], ["Actions blocked by the sandbox", st.actions_blocked, "bad"],
       ["Risky code held before running", st.risky_code_caught, "bad"], ["Runs verified", st.runs_verified, "good"],
       ["Replays reproduced", st.replays_total != null ? `${st.replays_matched} of ${st.replays_total}` : st.replays_matched, "good"],
-      ["Containers left running", 0, "good"]];
+      ["Containers running right now", st.containers_alive ?? "?", "good"]];
     const box = $("#stats"); box.replaceChildren(); box.hidden = false;
     for (const [label, v, tone] of items) {
       if (v == null) continue;

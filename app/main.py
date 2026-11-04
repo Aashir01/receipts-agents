@@ -29,6 +29,7 @@ import guard
 import llm
 import prompts
 import store
+import verify
 
 RUNNER_URL = os.environ.get("RUNNER_URL", "http://10.6.96.6:8080").rstrip("/")
 RUNNER_TOKEN = os.environ.get("RUNNER_TOKEN", "")
@@ -49,6 +50,11 @@ _runner = httpx.AsyncClient(timeout=httpx.Timeout(RUN_TIMEOUT_S + 30, connect=5)
 _hits: dict[str, deque] = defaultdict(deque)
 DATASETS: dict[str, dict] = {}
 APPROVALS: dict[str, dict] = {}
+ACTIVE: dict[str, dict] = {}     # run_id -> {stop, job}
+
+
+class Stopped(Exception):
+    pass
 
 
 # ---------- helpers ----------
@@ -80,12 +86,11 @@ def safe_name(name: str) -> str:
     return base
 
 
-async def run_in_sandbox(code: str, files: list[dict]) -> dict:
-    r = await _runner.post(
-        f"{RUNNER_URL}/run",
-        headers={"X-Runner-Token": RUNNER_TOKEN},
-        json={"code": code, "files": files, "timeout_s": RUN_TIMEOUT_S, "memory_mb": RUN_MEMORY_MB},
-    )
+async def run_in_sandbox(code: str, files: list[dict], job_id: str | None = None) -> dict:
+    payload = {"code": code, "files": files, "timeout_s": RUN_TIMEOUT_S, "memory_mb": RUN_MEMORY_MB}
+    if job_id:
+        payload["job_id"] = job_id
+    r = await _runner.post(f"{RUNNER_URL}/run", headers={"X-Runner-Token": RUNNER_TOKEN}, json=payload)
     if r.status_code != 200:
         raise RuntimeError(f"Runner error {r.status_code}: {r.text[:200]}")
     return r.json()
@@ -235,7 +240,8 @@ async def _wait_for_decision(approval_id: str):
     """Hold the stream open (with keep-alives) until a human decides or time runs out."""
     a = APPROVALS[approval_id]
     waited = 0
-    while not a["event"].is_set() and waited < APPROVAL_TIMEOUT_S:
+    run = ACTIVE.get(a.get("run_id"), {})
+    while not a["event"].is_set() and waited < APPROVAL_TIMEOUT_S and not run.get("stop"):
         try:
             await asyncio.wait_for(a["event"].wait(), 15)
         except asyncio.TimeoutError:
@@ -252,6 +258,24 @@ async def ask(body: Ask, request: Request):
         raise HTTPException(404, "Dataset not found. Upload it again.")
     rec = store.RunRecorder(user["id"] if user else None, ds, body.question)
     await rec.start()
+
+    ACTIVE[rec.id] = {"stop": False, "job": None}
+
+    def check_stop():
+        if ACTIVE.get(rec.id, {}).get("stop"):
+            raise Stopped()
+
+    async def sandbox(code: str) -> dict:
+        check_stop()
+        job = uuid.uuid4().hex[:12]
+        ACTIVE[rec.id]["job"] = job
+        try:
+            res = await run_in_sandbox(code, dataset_files(ds), job_id=job)
+        finally:
+            ACTIVE[rec.id]["job"] = None
+        if res["status"] == "stopped":
+            raise Stopped()
+        return res
 
     async def agent():
         """Yields event dicts (recorded + streamed) or raw keep-alive strings (streamed only)."""
@@ -274,11 +298,42 @@ async def ask(body: Ask, request: Request):
         plan = await llm.chat(prompts.plan_messages(body.question, ds["filename"], ds["profile"]), max_tokens=3000)
         yield {"type": "step", "id": "plan", "status": "done", "title": "Plan",
                "content": plan["text"], "model": plan["model"], "latency_s": plan["latency_s"]}
+        check_stop()
 
-        # 2. Code -> pre-flight scan -> (approval) -> run -> self-heal
+        # 2. Explore: a short sandboxed look at the data before the real analysis
+        yield {"type": "stage", "stage": "explore", "title": "Stage 1 of 3: explore the data"}
+        findings_text = ""
+        exp = await llm.chat(prompts.explore_messages(body.question, ds["filename"], ds["profile"],
+                                                      RUN_TIMEOUT_S, RUN_MEMORY_MB), max_tokens=4000)
+        exp_code = llm.extract_code(exp["text"])
+        exp_scan = [f for f in guard.scan_code(exp_code) if f["severity"] == "block"]
+        if exp_scan:
+            yield {"type": "explore", "status": "skipped", "code": exp_code, "model": exp["model"],
+                   "reason": "Exploration code wanted risky access, so it was not run: " +
+                             "; ".join(f["detail"] for f in exp_scan)}
+        else:
+            exp_res = await sandbox(exp_code)
+            exp_pre = {"question": q_safety["status"], "data_flags": len(data_flags), "code_findings": 0,
+                       "approval": "not needed"}
+            exp_rid, _ = await store.save_receipt(kind="analysis", code=exp_code, result=exp_res, model=exp["model"],
+                                                  run_id=rec.id, dataset=ds, attempt=0, preflight=exp_pre)
+            if exp_res["status"] == "ok" and exp_res["stdout"].strip():
+                findings_text = exp_res["stdout"][:3000]
+            yield {"type": "explore", "status": exp_res["status"], "code": exp_code, "model": exp["model"],
+                   "latency_s": exp["latency_s"],
+                   "result": {k: exp_res[k] for k in ("job_id", "status", "exit_code", "duration_s",
+                                                      "stdout", "stderr", "events", "limits")},
+                   "receipt": receipt(exp_code, exp_res, exp["model"], exp_pre)}
+        check_stop()
+
+        # 3. Analyze: code -> pre-flight scan -> (approval) -> run -> self-heal
+        yield {"type": "stage", "stage": "analyze", "title": "Stage 2 of 3: analyze"}
         messages = prompts.code_messages(body.question, ds["filename"], ds["profile"], plan["text"],
                                          RUN_TIMEOUT_S, RUN_MEMORY_MB)
         messages[0]["content"] += guard.summarise_data_flags(data_flags)
+        if findings_text:
+            messages[1]["content"] += ("\n\nExploration findings (printed by a sandboxed exploration run; "
+                                       "use the exact values shown):\n" + findings_text)
         result, code, model, last_decision, final_receipt = None, "", None, None, None
         for attempt in range(1, MAX_ATTEMPTS + 1):
             yield {"type": "step", "id": f"code{attempt}", "status": "running",
@@ -296,12 +351,13 @@ async def ask(body: Ask, request: Request):
 
             if blocking:
                 aid = uuid.uuid4().hex
-                APPROVALS[aid] = {"event": asyncio.Event(), "decision": None}
+                APPROVALS[aid] = {"event": asyncio.Event(), "decision": None, "run_id": rec.id}
                 yield {"type": "approval", "id": aid, "attempt": attempt, "findings": blocking,
                        "timeout_s": APPROVAL_TIMEOUT_S}
                 async for keep_alive in _wait_for_decision(aid):
                     yield keep_alive
                 last_decision = APPROVALS.pop(aid, {}).get("decision") or "timeout"
+                check_stop()
                 preflight["approval"] = {"approve": "approved by you"}.get(last_decision, last_decision)
                 yield {"type": "approval_result", "id": aid, "attempt": attempt,
                        "decision": last_decision, "findings": len(blocking)}
@@ -315,7 +371,7 @@ async def ask(body: Ask, request: Request):
                     continue
 
             yield {"type": "step", "id": f"run{attempt}", "status": "running", "title": "Running in sandbox"}
-            result = await run_in_sandbox(code, dataset_files(ds))
+            result = await sandbox(code)
             if result["status"] == "ok" and not result["stdout"].strip() and not result["outputs"]:
                 result["status"] = "no_output"
                 result["stderr"] = ("The script exited without printing anything or saving files. "
@@ -343,13 +399,54 @@ async def ask(body: Ask, request: Request):
                     {"role": "user", "content": fix},
                 ]
 
-        # 3. Explain only what execution proved
+        # 4. Verify (two-key): separately written code recomputes the headline numbers
+        verification = None
+        if result and result["status"] == "ok":
+            check_stop()
+            yield {"type": "stage", "stage": "verify", "title": "Stage 3 of 3: independent verification"}
+            yield {"type": "step", "id": "verify", "status": "running", "title": "Picking the headline numbers to verify"}
+            ext = await llm.chat(prompts.extract_messages(body.question, result["stdout"]), max_tokens=2000)
+            quantities = verify.parse_quantities(ext["text"], result["stdout"])
+            verification = {"status": "inconclusive", "checks": [], "reason": "No checkable numbers in the output"}
+            if quantities:
+                yield {"type": "step", "id": "verify", "status": "running",
+                       "title": f"A second auditor is recomputing {len(quantities)} number{'s' if len(quantities) > 1 else ''} from scratch"}
+                vmsgs = prompts.verify_messages(body.question, ds["filename"], ds["profile"], quantities,
+                                                RUN_TIMEOUT_S, RUN_MEMORY_MB)
+                for vtry in (1, 2):
+                    vrep = await llm.chat(vmsgs, max_tokens=6000)
+                    vcode = llm.extract_code(vrep["text"])
+                    if any(f["severity"] == "block" for f in guard.scan_code(vcode)):
+                        verification = {"status": "inconclusive", "checks": [],
+                                        "reason": "Verification code wanted risky access and was not run"}
+                        break
+                    vres = await sandbox(vcode)
+                    vpre = {"question": q_safety["status"], "data_flags": len(data_flags),
+                            "code_findings": 0, "approval": "not needed"}
+                    v_rid, _ = await store.save_receipt(kind="verification", code=vcode, result=vres,
+                                                        model=vrep["model"], run_id=rec.id, dataset=ds,
+                                                        attempt=vtry, preflight=vpre)
+                    verification = verify.compare(quantities, verify.parse_recomputed(vres["stdout"]))
+                    verification.update({"code": vcode, "model": vrep["model"], "receipt_id": v_rid if db.ENABLED else None,
+                                         "result": {k: vres[k] for k in ("job_id", "status", "exit_code", "duration_s",
+                                                                         "stdout", "stderr", "events", "limits")},
+                                         "receipt": receipt(vcode, vres, vrep["model"], vpre)})
+                    if vres["status"] == "ok" and verification["status"] != "inconclusive":
+                        break
+                    vmsgs = vmsgs + [{"role": "assistant", "content": f"```python\n{vcode}\n```"},
+                                     {"role": "user", "content": prompts.FIX_USER.format(
+                                         status=vres["status"], exit_code=vres["exit_code"],
+                                         stderr=(vres["stderr"].strip()[-2000:] or "No JSON line with the requested names was printed."))}]
+            yield {"type": "verify", **verification}
+
+        # 5. Explain only what execution proved (and what verification confirmed)
         if result and result["status"] == "ok":
             yield {"type": "step", "id": "explain", "status": "running", "title": "Writing answer"}
-            ans = await llm.chat(prompts.explain_messages(body.question, code, result["stdout"], result["outputs"]),
-                                 max_tokens=3000)
+            ans = await llm.chat(prompts.explain_messages_verified(body.question, code, result["stdout"],
+                                                                   result["outputs"], verification), max_tokens=3000)
             yield {"type": "answer", "markdown": ans["text"], "model": ans["model"],
-                   "grounded_in_job": result["job_id"], "receipt_id": final_receipt}
+                   "grounded_in_job": result["job_id"], "receipt_id": final_receipt,
+                   "verified": verification["status"] if verification else None}
             status = "done"
         elif result is None:
             yield {"type": "answer", "markdown":
@@ -364,10 +461,12 @@ async def ask(body: Ask, request: Request):
                    "grounded_in_job": result["job_id"]}
             status = "failed"
         yield {"type": "done", "total_s": round(time.monotonic() - started, 2), "status": status,
-               "run_id": rec.id, "saved": db.ENABLED}
+               "run_id": rec.id, "saved": db.ENABLED,
+               "verified": verification["status"] if verification else None}
 
     async def stream():
-        answer, status, total = None, "failed", None
+        answer, status, total, verified = None, "failed", None, None
+        t0 = time.monotonic()
         try:
             async for item in agent():
                 if isinstance(item, str):
@@ -376,7 +475,13 @@ async def ask(body: Ask, request: Request):
                 if item["type"] == "answer":
                     answer = item["markdown"]
                 if item["type"] == "done":
-                    status, total = item["status"], item["total_s"]
+                    status, total, verified = item["status"], item["total_s"], item.get("verified")
+                await rec.event(item)
+                yield sse(item)
+        except Stopped:
+            status, total = "stopped", round(time.monotonic() - t0, 2)
+            for item in ({"type": "stopped", "message": "Stopped by you. Any running sandbox container was killed."},
+                         {"type": "done", "total_s": total, "status": "stopped", "run_id": rec.id, "saved": db.ENABLED}):
                 await rec.event(item)
                 yield sse(item)
         except Exception as e:  # noqa: BLE001
@@ -384,10 +489,33 @@ async def ask(body: Ask, request: Request):
             await rec.event(err)
             yield sse(err)
         finally:
-            await rec.finish(status, answer, total)
+            ACTIVE.pop(rec.id, None)
+            v = verified if verified in ("verified", "mismatch") else ("skipped" if status == "done" else None)
+            await rec.finish(status, answer, total, v)
 
     return StreamingResponse(stream(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+@app.post("/api/runs/{run_id}/stop")
+async def stop_run(run_id: str):
+    """Stop button: halt the agent and kill its running sandbox container right away."""
+    run = ACTIVE.get(run_id)
+    if not run:
+        raise HTTPException(404, "That run is not active")
+    run["stop"] = True
+    for a in APPROVALS.values():
+        if a.get("run_id") == run_id and not a["event"].is_set():
+            a["decision"] = "stopped"
+            a["event"].set()
+    killed = False
+    if run.get("job"):
+        try:
+            r = await _runner.post(f"{RUNNER_URL}/kill/{run['job']}", headers={"X-Runner-Token": RUNNER_TOKEN}, timeout=10)
+            killed = r.status_code == 200 and r.json().get("killed", False)
+        except Exception:  # noqa: BLE001
+            pass
+    return {"stopping": True, "container_killed": killed}
 
 
 # ---------- accounts, history, sharing, files, stats ----------
@@ -467,8 +595,13 @@ async def file_out(receipt_id: str, name: str):
 
 @app.get("/api/stats")
 async def stats():
-    row = await db.one("containment_stats", {"select": "*"})
-    return row or {}
+    row = await db.one("containment_stats", {"select": "*"}) or {}
+    try:
+        r = await _runner.get(f"{RUNNER_URL}/alive", headers={"X-Runner-Token": RUNNER_TOKEN}, timeout=5)
+        row["containers_alive"] = r.json().get("containers") if r.status_code == 200 else None
+    except Exception:  # noqa: BLE001
+        row["containers_alive"] = None
+    return row
 
 
 # ---------- Replay: re-run a stored receipt and compare hashes ----------

@@ -55,6 +55,7 @@ SAFE_NAME = re.compile(r"^[A-Za-z0-9._-]{1,100}$")
 
 app = FastAPI(title="Agent Rush Sandbox Runner")
 _slots = asyncio.Semaphore(MAX_CONCURRENT)
+_stopped: set[str] = set()   # job ids a human stopped
 
 
 class InputFile(BaseModel):
@@ -67,6 +68,7 @@ class RunRequest(BaseModel):
     files: list[InputFile] = []
     timeout_s: int = Field(20, ge=1, le=MAX_TIMEOUT_S)
     memory_mb: int = Field(512, ge=64, le=MAX_MEMORY_MB)
+    job_id: str | None = Field(None, pattern=r"^[a-f0-9]{12}$")   # chosen by the app so it can stop the job
 
 
 def _check_token(token: str | None) -> None:
@@ -118,6 +120,25 @@ async def health():
     return {"ok": True, "runtime": DOCKER_RUNTIME, "image": SANDBOX_IMAGE}
 
 
+@app.post("/kill/{job_id}")
+async def kill(job_id: str, x_runner_token: str | None = Header(default=None)):
+    """Stop button: kill a running sandbox container immediately."""
+    _check_token(x_runner_token)
+    if not re.fullmatch(r"[a-f0-9]{12}", job_id):
+        raise HTTPException(400, "Bad job id")
+    _stopped.add(job_id)
+    rc, _, _ = await _docker("kill", f"sbx-{job_id}")
+    return {"killed": rc == 0, "job_id": job_id}
+
+
+@app.get("/alive")
+async def alive(x_runner_token: str | None = Header(default=None)):
+    """How many sandbox containers exist right now (should be 0 when idle)."""
+    _check_token(x_runner_token)
+    rc, out, _ = await _docker("ps", "-q", "--filter", "name=sbx-")
+    return {"containers": len([x for x in out.split() if x]) if rc == 0 else None}
+
+
 @app.post("/run")
 async def run(req: RunRequest, x_runner_token: str | None = Header(default=None)):
     _check_token(x_runner_token)
@@ -126,7 +147,7 @@ async def run(req: RunRequest, x_runner_token: str | None = Header(default=None)
     if total_in > MAX_INPUT_BYTES:
         raise HTTPException(413, "Input files too large")
 
-    job_id = uuid.uuid4().hex[:12]
+    job_id = req.job_id or uuid.uuid4().hex[:12]
     name = f"sbx-{job_id}"
     job_dir = JOBS_DIR / job_id
     events: list[dict] = []
@@ -200,7 +221,11 @@ async def run(req: RunRequest, x_runner_token: str | None = Header(default=None)
             stdout = out_b.decode(errors="replace")
             stderr = err_b.decode(errors="replace")
 
-            if status == "ok" and exit_code == 137:
+            if job_id in _stopped:
+                _stopped.discard(job_id)
+                status = "stopped"
+                event("killed", "Stopped by a human - container killed immediately")
+            elif status == "ok" and exit_code == 137:
                 status = "oom_killed"
                 event("killed", f"Memory limit {req.memory_mb} MB exceeded - process killed")
             elif status == "ok" and exit_code != 0:
