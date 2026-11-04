@@ -88,7 +88,7 @@ Page text is treated as untrusted data throughout: the model is told never to fo
 | Lifecycle | One container per task, `--rm`, existence checked after every run, job folder deleted |
 | Network perimeter | Runner listens only on the private IP; host firewall allows only the app server's private IP; Vultr Firewall groups on both VMs |
 | Pre-flight guard | Sandbox-side data scan for injected instructions, Nemotron safety check on the question, static code scan, human approval for anything risky |
-| Browser egress | Per-task internal network; allowlist proxy is the only exit; private/metadata IPs refused; 1 GB memory, 256 processes, 90 s per turn |
+| Browser egress | Per-task internal network; allowlist proxy is the only exit (the proxy runs only our fixed proxy code in a hardened standard container, read-only, no capabilities, nobody user; the browser itself runs on gVisor); private/metadata IPs refused; 1 GB memory, 256 processes, 90 s per turn |
 | Browser actions | Fixed action vocabulary (no model-written browser code), credential fields refused, submits need approval |
 | Abuse limits | Per-IP hourly rate limit, 10 MB uploads, output size caps |
 
