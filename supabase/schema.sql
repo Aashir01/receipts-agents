@@ -65,6 +65,9 @@ create table if not exists public.receipts (
   events         jsonb,
   outputs        jsonb,          -- [{name, size, sha256, storage_path}]
   preflight      jsonb,
+  stdout         text,
+  stdout_sha256  text,
+  stderr         text,
   executed_on    text not null default 'executor-vm',   -- or 'disposable-vm:<id>'
   created_at     timestamptz not null default now()
 );
@@ -138,3 +141,8 @@ select
 insert into storage.buckets (id, name, public)
 values ('uploads', 'uploads', false), ('outputs', 'outputs', false)
 on conflict (id) do nothing;
+
+-- Safe to re-run: columns added after the first version of this file
+alter table public.receipts add column if not exists stdout text;
+alter table public.receipts add column if not exists stdout_sha256 text;
+alter table public.receipts add column if not exists stderr text;
