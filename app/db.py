@@ -16,7 +16,7 @@ SERVICE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
 ANON_KEY = os.environ.get("SUPABASE_ANON_KEY", "")
 ENABLED = bool(URL and SERVICE_KEY)
 
-_c = httpx.AsyncClient(timeout=httpx.Timeout(30, connect=8))
+_c = httpx.AsyncClient(timeout=httpx.Timeout(float(os.environ.get("DB_TIMEOUT_S", "12")), connect=4))
 _user_cache: dict[str, tuple[float, dict | None]] = {}
 
 
@@ -151,11 +151,11 @@ async def diagnose() -> dict:
     if not ENABLED:
         return out
     try:
-        r = await _c.get(f"{URL}/rest/v1/runs", headers=_headers(), params={"select": "id", "limit": "1"})
+        r = await _c.get(f"{URL}/rest/v1/runs", headers=_headers(), params={"select": "id", "limit": "1"}, timeout=4)
         out["read_status"] = r.status_code
         if r.status_code >= 300:
             out["read_error"] = r.text[:160]
-        s = await _c.get(f"{URL}/storage/v1/bucket/outputs", headers=_headers())
+        s = await _c.get(f"{URL}/storage/v1/bucket/outputs", headers=_headers(), timeout=4)
         out["storage_status"] = s.status_code
     except Exception as e:  # noqa: BLE001
         out["error"] = type(e).__name__

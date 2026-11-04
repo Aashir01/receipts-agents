@@ -144,6 +144,12 @@ def public_outputs(result: dict, receipt_id: str | None = None) -> list[dict]:
 
 # ---------- API ----------
 
+@app.get("/api/ping")
+async def ping():
+    """Liveness only: no network calls, so deploys never fail because a dependency is slow."""
+    return {"ok": True}
+
+
 @app.get("/api/health")
 async def health():
     runner_ok = False
