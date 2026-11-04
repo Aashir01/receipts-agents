@@ -142,7 +142,8 @@
   .charts figure { margin: 0; background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 8px; }
   .charts img { width: 100%; height: auto; display: block; }
   .charts figcaption { font-size: 12px; color: var(--muted); margin-top: 4px; }
-  .dl { display: inline-block; margin-top: 8px; font-size: 13.5px; color: var(--blue-ink); }
+  .dl { display: inline-block; margin: 8px 18px 0 0; font-size: 13.5px; color: var(--blue-ink); }
+  .step pre.out { white-space: pre-wrap; word-break: break-word; }
 
   .answer { border-left: 3px solid var(--pass); padding: 4px 0 4px 16px; margin-top: 4px; }
   .answer p { margin: 0 0 10px; }
@@ -419,7 +420,7 @@ function handle(ev, tl, steps) {
     li.querySelector("h4").textContent = r.status === "ok" ? "Ran in sandbox"
       : blocked ? "Sandbox blocked an action" : "Run failed, sending the error back to the model";
     li.querySelector(".sub").textContent = `Job ${r.job_id}, exit code ${r.exit_code}, ${r.duration_s} s, no network`;
-    if (r.stdout.trim()) { const d = el("details"); d.open = r.status === "ok"; d.append(el("summary", null, "Printed output"), el("pre", null, r.stdout)); li.append(d); }
+    if (r.stdout.trim()) { const d = el("details"); d.open = r.status === "ok"; d.append(el("summary", null, "Printed output"), el("pre", "out", r.stdout)); li.append(d); }
     if (r.status !== "ok" && r.stderr.trim()) li.append(el("pre", "err", r.stderr.trim().split("\n").slice(-12).join("\n")));
     const imgs = ev.outputs.filter(o => o.mime === "image/png");
     if (imgs.length) {
