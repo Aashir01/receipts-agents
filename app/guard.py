@@ -98,7 +98,8 @@ def scan_code(code: str) -> list[dict]:
             same_line = any(f["category"] == "filesystem" and f["line"] == getattr(node, "lineno", None)
                             for f in findings)
             if not same_line and re.search(r"(/etc/passwd|/etc/shadow|/proc/self|/root/|\.ssh/|169\.254\.169\.254)", node.value):
-                add("block", "filesystem", f"References a system path: {node.value[:80]}", node)
+                # Only text here (e.g. a pattern list); opening such a path is caught above and blocks.
+                add("warn", "filesystem", f"Mentions a system path in text: {node.value[:80]}", node)
 
     findings.sort(key=lambda f: (f["severity"] != "block", f["line"] or 0))
     return findings

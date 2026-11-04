@@ -175,7 +175,12 @@ Return ONLY a JSON array, no prose:
 [{"name": "short_snake_case_name", "value": <number exactly as printed>,
   "definition": "precise definition: which column(s), which filter, which aggregation, units"}]
 Use only numbers that literally appear in the output. Prefer totals, rates and
-the winning/losing values over long lists."""
+the winning/losing values over long lists.
+Pick ONLY deterministic facts that anyone can recompute from the raw data the same way:
+counts, sums, averages, minimums/maximums, ratios and growth rates of columns.
+NEVER pick heuristic or judgment-based numbers such as keyword or pattern-match counts,
+risk scores, sentiment, "indicators detected", or anything depending on chosen rules.
+If no deterministic number answers the question, return []."""
 
 VERIFY_SYSTEM = """You are an independent auditor. Recompute the requested quantities from
 the raw file WITHOUT seeing anyone else's code or results.

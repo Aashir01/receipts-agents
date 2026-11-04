@@ -131,3 +131,32 @@ async def user_from_token(token: str | None) -> dict | None:
     if len(_user_cache) > 2000:
         _user_cache.clear()
     return user
+
+
+def _jwt_role(token: str) -> str | None:
+    """Read the role claim of a Supabase key (no verification, nothing secret is returned)."""
+    import base64, json
+    try:
+        part = token.split(".")[1]
+        part += "=" * (-len(part) % 4)
+        return json.loads(base64.urlsafe_b64decode(part)).get("role")
+    except Exception:  # noqa: BLE001
+        return None
+
+
+async def diagnose() -> dict:
+    """Health details for the database connection, safe to show publicly."""
+    out = {"configured": ENABLED, "service_key_role": _jwt_role(SERVICE_KEY) if SERVICE_KEY else None,
+           "anon_key_role": _jwt_role(ANON_KEY) if ANON_KEY else None}
+    if not ENABLED:
+        return out
+    try:
+        r = await _c.get(f"{URL}/rest/v1/runs", headers=_headers(), params={"select": "id", "limit": "1"})
+        out["read_status"] = r.status_code
+        if r.status_code >= 300:
+            out["read_error"] = r.text[:160]
+        s = await _c.get(f"{URL}/storage/v1/bucket/outputs", headers=_headers())
+        out["storage_status"] = s.status_code
+    except Exception as e:  # noqa: BLE001
+        out["error"] = type(e).__name__
+    return out

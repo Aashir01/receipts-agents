@@ -26,7 +26,7 @@ try:
 except json.JSONDecodeError:
     EXTRA_BODY = {}
 
-_client = httpx.AsyncClient(timeout=httpx.Timeout(180, connect=10))
+_client = httpx.AsyncClient(timeout=httpx.Timeout(float(os.environ.get("LLM_TIMEOUT_S", "60")), connect=10))
 
 
 class LLMError(RuntimeError):

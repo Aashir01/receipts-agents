@@ -153,7 +153,8 @@ async def health():
     except Exception:  # noqa: BLE001
         pass
     return {"app": "ok", "runner_reachable": runner_ok,
-            "model_main": llm.MODEL_MAIN, "model_fallback": llm.MODEL_FALLBACK}
+            "model_main": llm.MODEL_MAIN, "model_fallback": llm.MODEL_FALLBACK,
+            "database": await db.diagnose()}
 
 
 @app.get("/api/samples")
@@ -406,6 +407,8 @@ async def ask(body: Ask, request: Request):
             yield {"type": "stage", "stage": "verify", "title": "Stage 3 of 3: independent verification"}
             yield {"type": "step", "id": "verify", "status": "running", "title": "Picking the headline numbers to verify"}
             ext = await llm.chat(prompts.extract_messages(body.question, result["stdout"]), max_tokens=2000)
+            yield {"type": "step", "id": "verify", "status": "running",
+                   "title": f"Picked the numbers to verify ({ext['model']}, {ext['latency_s']} s)"}
             quantities = verify.parse_quantities(ext["text"], result["stdout"])
             verification = {"status": "inconclusive", "checks": [], "reason": "No checkable numbers in the output"}
             if quantities:
