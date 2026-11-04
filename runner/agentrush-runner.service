@@ -1,0 +1,14 @@
+[Unit]
+Description=Agent Rush sandbox runner
+After=docker.service network-online.target
+Requires=docker.service
+
+[Service]
+EnvironmentFile=/etc/agentrush/runner.env
+WorkingDirectory=/opt/agentrush-runner
+ExecStart=/opt/agentrush-runner/venv/bin/uvicorn app:app --host ${RUNNER_BIND} --port 8080
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
