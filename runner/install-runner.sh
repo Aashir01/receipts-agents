@@ -42,6 +42,11 @@ RUNNER_TOKEN = os.environ.get("RUNNER_TOKEN", "")
 SANDBOX_IMAGE = os.environ.get("SANDBOX_IMAGE", "agentrush-sandbox:latest")
 BROWSER_IMAGE = os.environ.get("BROWSER_IMAGE", "agentrush-browser:latest")
 EGRESS_IMAGE = os.environ.get("EGRESS_IMAGE", "agentrush-egress:latest")
+# The egress proxy runs only our own fixed proxy code, hardened (read-only, no capabilities,
+# nobody user). It uses the standard runtime because gVisor cannot take a network attached to a
+# running container, and the proxy must sit on two networks. The browser, which handles
+# untrusted pages, always runs on gVisor.
+EGRESS_RUNTIME = os.environ.get("EGRESS_RUNTIME", "runc")
 DOCKER_RUNTIME = os.environ.get("DOCKER_RUNTIME", "runsc")
 JOBS_DIR = Path(os.environ.get("JOBS_DIR", "/var/lib/agentrush/jobs"))
 SANDBOX_UID = os.environ.get("SANDBOX_UID", "1000")
@@ -315,9 +320,6 @@ async def browse(req: BrowseRequest, x_runner_token: str | None = Header(default
     async with _browser_slot:
         try:
             job_dir.mkdir(parents=True, exist_ok=False)
-            (job_dir / "task.json").write_text(json.dumps({"actions": req.actions, "proxy": "http://proxy:8888"}))
-            os.system(f"chown -R {SANDBOX_UID}:{SANDBOX_UID} {job_dir} 2>/dev/null")
-
             # 1. private network with no route to anywhere
             rc, _, err = await _docker("network", "create", "--internal", net)
             if rc != 0:
@@ -325,14 +327,31 @@ async def browse(req: BrowseRequest, x_runner_token: str | None = Header(default
             event("created", f"Private network {net} created with no internet route")
             # 2. egress proxy: the only bridge between that network and the internet
             rc, _, err = await _docker(
-                "run", "-d", "--name", proxy_name, f"--runtime={DOCKER_RUNTIME}",
+                "run", "-d", "--name", proxy_name, f"--runtime={EGRESS_RUNTIME}",
                 "--memory", "128m", "--cpus", "0.5", "--pids-limit", "64", "--read-only",
                 "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
                 "-e", f"ALLOW={','.join(domains)}", EGRESS_IMAGE)
             if rc != 0:
                 raise HTTPException(500, f"proxy start failed: {err[:200]}")
-            await _docker("network", "connect", "--alias", "proxy", net, proxy_name)
+            rc, _, err = await _docker("network", "connect", "--alias", "proxy", net, proxy_name)
+            if rc != 0:
+                raise HTTPException(500, f"proxy network connect failed: {err[:200]}")
+            # The browser reaches the proxy by IP: gVisor cannot use Docker's internal DNS.
+            _, nets, _ = await _docker("inspect", "--format", "{{json .NetworkSettings.Networks}}", proxy_name)
+            try:
+                proxy_ip = json.loads(nets or "{}").get(net, {}).get("IPAddress", "")
+            except json.JSONDecodeError:
+                proxy_ip = ""
+            if not proxy_ip:
+                raise HTTPException(500, "could not find the egress proxy's address on the private network")
+            for _ in range(50):                       # wait until the proxy is listening
+                _, plog, _ = await _docker("logs", proxy_name)
+                if '"ready"' in plog:
+                    break
+                await asyncio.sleep(0.1)
             event("created", f"Egress proxy {proxy_name} allows only: {', '.join(domains)}")
+            (job_dir / "task.json").write_text(json.dumps({"actions": req.actions, "proxy": f"http://{proxy_ip}:8888"}))
+            os.system(f"chown -R {SANDBOX_UID}:{SANDBOX_UID} {job_dir} 2>/dev/null")
             # 3. the browser itself, on the private network only
             cmd = [
                 "run", "--name", name, "--rm", f"--runtime={DOCKER_RUNTIME}", "--network", net,
@@ -390,6 +409,13 @@ async def browse(req: BrowseRequest, x_runner_token: str | None = Header(default
                     result = json.loads(rf.read_text())
                 except json.JSONDecodeError:
                     result = {}
+            infra_error = None
+            proxy_saw = any(e["kind"] in ("egress", "blocked") for e in events)
+            if not proxy_saw and any("ERR_PROXY_CONNECTION_FAILED" in (st.get("error") or "")
+                                     for st in result.get("steps", [])):
+                infra_error = "The browser could not reach its egress proxy (sandbox networking problem, not the website)."
+                event("error", infra_error)
+                status = "error"
             shots = []
             for f in sorted(job_dir.glob("shot_*.png"), key=lambda x: int(x.stem.split("_")[1]))[:20]:
                 if f.stat().st_size <= MAX_OUTPUT_FILE_BYTES:
@@ -398,7 +424,7 @@ async def browse(req: BrowseRequest, x_runner_token: str | None = Header(default
             return {
                 "job_id": job_id, "status": status, "exit_code": exit_code, "duration_s": duration,
                 "stdout": _truncate(out_b.decode(errors="replace")), "stderr": _truncate(err_b.decode(errors="replace")),
-                "result": result, "outputs": shots, "events": events,
+                "result": result, "outputs": shots, "events": events, "infra_error": infra_error,
                 "limits": {"runtime": DOCKER_RUNTIME, "network": f"private, egress via allowlist proxy ({', '.join(domains)})",
                            "memory_mb": 1024, "cpus": 1, "pids_limit": 256, "timeout_s": req.timeout_s,
                            "root_fs": "read-only", "user": f"uid {SANDBOX_UID} (non-root)",

@@ -689,6 +689,15 @@ async def research_run(body: Research, request: Request):
             if res["status"] == "stopped":
                 raise Stopped()
             last_job = res["job_id"]
+            if res.get("infra_error"):
+                yield {"type": "browse", "turn": turn, "receipt_id": None,
+                       "result": {k: res[k] for k in ("job_id", "status", "exit_code", "duration_s", "events", "limits")},
+                       "final_url": None, "title": None, "steps": [], "outputs": [],
+                       "receipt": receipt(json.dumps(chk["actions"], indent=1), res, model)}
+                yield {"type": "error", "message": res["infra_error"] + " Nothing was browsed; please try again later."}
+                yield {"type": "done", "total_s": round(time.monotonic() - started, 2), "status": "failed",
+                       "run_id": rec.id, "saved": db.ENABLED}
+                return
             actions_text = json.dumps(chk["actions"], indent=1)
             pre = {"question": q_safety["status"], "data_flags": 0, "code_findings": 0, "approval": approval_state,
                    "sites": f"{', '.join(domains)} ({scope_state})"}
