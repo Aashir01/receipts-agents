@@ -78,7 +78,7 @@ async def save_receipt(*, kind: str, code: str, result: dict, model: str | None,
         "limits": result.get("limits"), "events": result.get("events"), "outputs": outputs,
         "preflight": preflight, "stdout": result.get("stdout", "")[:20000],
         "stdout_sha256": sha256(result.get("stdout", "").encode()),
-        "stderr": result.get("stderr", "")[:20000], "executed_on": executed_on,
+        "stderr": result.get("stderr", "")[:20000], "executed_on": result.get("executed_on") or executed_on,
     })
     return rid, outputs
 

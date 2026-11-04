@@ -252,6 +252,12 @@
   .modes { display: inline-flex; gap: 4px; padding: 4px; background: #DDE3EA; border-radius: 10px; margin-bottom: 14px; }
   .modes button { border: 0; background: transparent; padding: 8px 14px; border-radius: 7px; cursor: pointer; font-weight: 500; color: var(--muted); }
   .modes button[aria-selected="true"] { background: #fff; color: var(--ink); box-shadow: 0 1px 2px #16202E22; }
+  .where { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin: 0 0 14px; font-size: 14px; }
+  .where legend { float: left; padding: 0; margin-right: 4px; color: var(--muted); }
+  .where fieldset { border: 0; padding: 0; margin: 0; display: contents; }
+  .where label { display: inline-flex; gap: 6px; align-items: center; cursor: pointer; }
+  .where small { color: var(--muted); }
+  .vmcard { margin-top: 8px; font-size: 13px; color: var(--muted); }
   .acts { margin: 6px 0 0; padding-left: 18px; font: 12px/1.6 var(--mono); }
   .acts li.risky { color: var(--stamp); }
   .shots { display: grid; gap: 10px; margin-top: 10px; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
@@ -305,6 +311,13 @@
     <div class="modes" role="tablist" aria-label="What should the agent do?">
       <button type="button" role="tab" id="tab-analyze" aria-selected="true" aria-controls="askbox">Analyze a file</button>
       <button type="button" role="tab" id="tab-research" aria-selected="false" aria-controls="research">Research the web</button>
+    </div>
+    <div class="where" id="where" hidden>
+      <fieldset>
+        <legend>Run on</legend>
+        <label><input type="radio" name="iso" value="container" checked> Shared sandbox <small>seconds</small></label>
+        <label><input type="radio" name="iso" value="vm"> A fresh Vultr VM <small>about 2 to 4 min to boot, destroyed after the run</small></label>
+      </fieldset>
     </div>
     <section class="block ask" id="research" hidden>
       <h2>Research the web</h2>
@@ -511,7 +524,7 @@ async function run() {
 
   try {
     const res = await api("/api/ask", { method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ dataset_id: dataset.dataset_id, question }) });
+      body: JSON.stringify({ dataset_id: dataset.dataset_id, question, isolation: isolation() }) });
     if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || `HTTP ${res.status}`); }
     await readStream(res, tl, steps);
   } catch (e) {
@@ -521,6 +534,14 @@ async function run() {
     $("#stop").hidden = true;
   }
 }
+
+function isolation() {
+  return document.querySelector('input[name="iso"]:checked')?.value || "container";
+}
+document.querySelectorAll('input[name="iso"]').forEach(r => r.addEventListener("change", () => {
+  if (isolation() === "vm" && appConfig.auth && !session) { r.checked = false;
+    document.querySelector('input[name="iso"][value="container"]').checked = true; $("#signin").showModal(); }
+}));
 
 async function readStream(res, tl, steps) {
   const reader = res.body.getReader(), dec = new TextDecoder();
@@ -569,7 +590,7 @@ $("#rrun").onclick = async () => {
   try {
     const domains = $("#sites").value.split(",").map(x => x.trim()).filter(Boolean);
     const res = await api("/api/research", { method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ goal, domains }) });
+      body: JSON.stringify({ goal, domains, isolation: isolation() }) });
     if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || `HTTP ${res.status}`); }
     await readStream(res, tl, steps);
   } catch (e) {
@@ -607,6 +628,8 @@ function handle(ev, tl, steps) {
       li.className = "step done";
       if (ev.model) li.querySelector(".sub").textContent = `${ev.model}, ${ev.latency_s} s`;
       if (ev.content) li.append(el("div", "plan", ev.content));
+    } else if (ev.status === "failed") {
+      li.className = "step fail";
     }
   } else if (ev.type === "code") {
     const li = steps[`code${ev.attempt}`];
@@ -742,6 +765,25 @@ function handle(ev, tl, steps) {
     tl.append(li);
     if (ev.result) printSlip({ title: "Verification", receipt: ev.receipt, events: ev.result.events, limits: ev.result.limits,
       stamp: ev.status === "verified" ? ["VERIFIED", true] : ev.status === "mismatch" ? ["MISMATCH", false] : null });
+  } else if (ev.type === "vm") {
+    const li = steps.vm || stepNode(tl, steps, "vm", "Fresh VM");
+    if (ev.status === "created") {
+      li.querySelector(".sub").textContent = `Vultr instance ${ev.label} (${ev.instance_id.slice(0, 8)}) in ${ev.region}, plan ${ev.plan}, booting from the executor snapshot with a one-time runner token.`;
+    } else if (ev.status === "ready") {
+      li.className = "step done";
+      li.querySelector(".sub").textContent = `Instance ${ev.label} is up on private IP ${ev.ip} after ${ev.ready_s} s. Every sandbox job in this run goes only to this machine.`;
+    } else if (ev.status === "destroyed") {
+      const end = steps["vm-end"] || stepNode(tl, steps, "vm-end", "Fresh VM destroyed");
+      end.className = "step " + (ev.requested ? "done" : "fail");
+      end.querySelector(".sub").textContent = ev.requested
+        ? `${ev.label} deleted after ${ev.lifetime_s} s. ${ev.confirmed ? "The Vultr API confirms it is gone." : "Deletion requested; the Vultr API had not confirmed yet."}`
+        : `Delete failed; the watchdog removes any fresh VM older than ${ev.max_age_min} min.`;
+      printVm(ev);
+    } else {
+      li.className = "step blocked";
+      li.querySelector("h4").textContent = "Fresh VM not used";
+      li.querySelector(".sub").textContent = ev.message;
+    }
   } else if (ev.type === "stopped") {
     tl.querySelectorAll(".step.running").forEach(n => n.className = "step fail");
     const li = el("li", "step fail"); li.append(el("span", "mark"), el("h4", null, "Stopped"), el("div", "sub", ev.message)); tl.append(li);
@@ -846,6 +888,18 @@ function handle(ev, tl, steps) {
 /* ---------- receipt printer ---------- */
 function line(k, v) { const d = el("div", "kv"); d.append(el("span", null, k), el("span", null, v)); return d; }
 
+function printVm(ev) {
+  $("#emptyroll")?.remove();
+  const s = el("div", "slip print");
+  s.append(el("div", "title", "Fresh VM"));
+  s.append(line("instance", `${ev.label} (${ev.instance_id.slice(0, 8)})`));
+  s.append(line("lifetime", `${ev.lifetime_s} s`));
+  s.append(line("deleted", ev.requested ? (ev.confirmed ? "yes, confirmed by Vultr API" : "requested") : "failed"));
+  s.append(line("watchdog", `deletes any left after ${ev.max_age_min} min`));
+  if (ev.requested) s.append(el("div", "stamp ok", "DESTROYED"));
+  const roll = $("#roll"); roll.append(s); roll.scrollTop = roll.scrollHeight;
+}
+
 function printSlip({ title, receipt, events, limits, note, selfHealed, stamp }) {
   $("#emptyroll")?.remove();
   const s = el("div", "slip print");
@@ -862,6 +916,7 @@ function printSlip({ title, receipt, events, limits, note, selfHealed, stamp }) 
     s.append(line("limits", `${limits.memory_mb} MB · ${limits.cpus} cpu · ${limits.timeout_s} s`));
     s.append(line("user", limits.user.replace(" (non-root)", " non-root")));
     s.append(line("secrets inside", String(limits.secrets_in_sandbox)));
+    if (limits.machine) s.append(line("machine", limits.machine));
   }
   const pf = receipt.preflight;
   if (pf) {
@@ -1039,6 +1094,7 @@ async function initAuth() {
     sb.auth.onAuthStateChange((_e, s) => { session = s; renderAcct(); loadHistory(); });
   }
   renderAcct(); loadHistory();
+  $("#where").hidden = !appConfig.fresh_vm;
 }
 
 /* ---------- tiny, escaped markdown ---------- */

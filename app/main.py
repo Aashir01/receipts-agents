@@ -25,6 +25,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 import db
+import disposable
 import guard
 import llm
 import prompts
@@ -87,14 +88,31 @@ def safe_name(name: str) -> str:
     return base
 
 
-async def run_in_sandbox(code: str, files: list[dict], job_id: str | None = None) -> dict:
+def _target(vm: dict | None) -> tuple[str, str]:
+    """Runner URL and token: the run's fresh VM if it has one, otherwise the shared executor VM."""
+    if vm and vm.get("url") and not vm.get("destroyed"):
+        return vm["url"], vm["token"]
+    return RUNNER_URL, RUNNER_TOKEN
+
+
+def _mark_machine(res: dict, vm: dict | None) -> dict:
+    if vm and vm.get("url") and not vm.get("destroyed"):
+        res["executed_on"] = f"disposable-vm:{vm['id']}"
+        res.setdefault("limits", {})["machine"] = f"fresh VM {vm['label']} (destroyed)"
+        res.setdefault("events", []).insert(0, {"t": round(time.time(), 3), "kind": "created",
+                                                "detail": f"Fresh Vultr VM {vm['label']} ({vm['id'][:8]}) created for this run only"})
+    return res
+
+
+async def run_in_sandbox(code: str, files: list[dict], job_id: str | None = None, vm: dict | None = None) -> dict:
     payload = {"code": code, "files": files, "timeout_s": RUN_TIMEOUT_S, "memory_mb": RUN_MEMORY_MB}
     if job_id:
         payload["job_id"] = job_id
-    r = await _runner.post(f"{RUNNER_URL}/run", headers={"X-Runner-Token": RUNNER_TOKEN}, json=payload)
+    url, token = _target(vm)
+    r = await _runner.post(f"{url}/run", headers={"X-Runner-Token": token}, json=payload)
     if r.status_code != 200:
         raise RuntimeError(f"Runner error {r.status_code}: {r.text[:200]}")
-    return r.json()
+    return _mark_machine(r.json(), vm)
 
 
 async def get_user(request: Request) -> dict | None:
@@ -224,6 +242,7 @@ async def use_sample(sample_id: str, request: Request):
 class Ask(BaseModel):
     dataset_id: str
     question: str = Field(..., min_length=3, max_length=1000)
+    isolation: str = Field("container", pattern="^(container|vm)$")
 
 
 class Decision(BaseModel):
@@ -257,17 +276,104 @@ async def _wait_for_decision(approval_id: str):
             yield ": keep-alive\n\n"
 
 
+# ---------- fresh-VM isolation tier ----------
+
+async def _teardown(vm: dict):
+    yield {"type": "step", "id": "vm-end", "status": "running", "title": "Destroying the fresh VM"}
+    res = await disposable.destroy(vm["id"])
+    vm["destroyed"] = True
+    yield {"type": "step", "id": "vm-end", "status": "done" if res["requested"] else "failed",
+           "title": "Fresh VM destroyed" if res["requested"] else "Could not delete the VM; the watchdog will remove it"}
+    yield {"type": "vm", "status": "destroyed", "instance_id": vm["id"], "label": vm["label"],
+           "lifetime_s": round(time.time() - vm["created"], 1), "requested": res["requested"],
+           "confirmed": res["confirmed"], "max_age_min": disposable.MAX_AGE_MIN}
+
+
+async def _provision(run_id: str):
+    """Create a brand-new Vultr VM for this run and wait for its runner. Falls back to the shared
+    sandbox (and says so) if anything goes wrong."""
+    run = ACTIVE[run_id]
+    why = disposable.can_create()
+    if why:
+        yield {"type": "vm", "status": "unavailable", "message": f"{why}. This run uses the shared sandbox."}
+        return
+    yield {"type": "step", "id": "vm", "status": "running", "title": "Creating a fresh Vultr VM for this run"}
+    try:
+        vm = await disposable.create(run_id)
+    except Exception as e:  # noqa: BLE001
+        yield {"type": "step", "id": "vm", "status": "failed", "title": "Could not create a fresh VM"}
+        yield {"type": "vm", "status": "failed", "message": f"{e}. This run uses the shared sandbox."}
+        return
+    run["vm"] = vm
+    yield {"type": "vm", "status": "created", "instance_id": vm["id"], "label": vm["label"],
+           "region": vm["region"], "plan": vm["plan"]}
+    task = asyncio.create_task(disposable.wait_ready(vm, lambda: run.get("stop")))
+    while not task.done():
+        done, _ = await asyncio.wait({task}, timeout=15)
+        if not done:
+            yield {"type": "step", "id": "vm", "status": "running",
+                   "title": f"Booting fresh VM {vm['label']} from the executor snapshot "
+                            f"({int(time.time() - vm['created'])} s)"}
+    try:
+        ok = task.result()
+    except Exception as e:  # noqa: BLE001
+        yield {"type": "step", "id": "vm", "status": "failed", "title": "The fresh VM did not come up"}
+        async for item in _teardown(vm):
+            yield item
+        run["vm"] = None
+        yield {"type": "vm", "status": "failed", "message": f"{e}. This run uses the shared sandbox."}
+        return
+    if not ok:
+        raise Stopped()
+    yield {"type": "step", "id": "vm", "status": "done", "title": f"Fresh VM {vm['label']} ready in {vm['ready_s']} s"}
+    yield {"type": "vm", "status": "ready", "instance_id": vm["id"], "label": vm["label"], "ip": vm["ip"],
+           "ready_s": vm["ready_s"], "region": vm["region"], "plan": vm["plan"]}
+
+
+async def _with_teardown(run_id: str, agen):
+    """Destroy the run's fresh VM before the final event, on Stop, and on any error."""
+    run = ACTIVE.get(run_id, {})
+
+    def live():
+        vm = run.get("vm")
+        return vm if vm and not vm.get("destroyed") else None
+
+    try:
+        async for item in agen:
+            if isinstance(item, dict) and item.get("type") == "done" and live():
+                async for x in _teardown(live()):
+                    yield x
+            yield item
+    except Stopped:
+        if live():
+            async for x in _teardown(live()):
+                yield x
+        raise
+    finally:
+        if live():
+            await disposable.destroy(live()["id"])
+            run["vm"]["destroyed"] = True
+
+
+@app.on_event("startup")
+async def _start_watchdog():
+    if disposable.ENABLED:
+        asyncio.create_task(disposable.watchdog())
+
+
 @app.post("/api/ask")
 async def ask(body: Ask, request: Request):
     rate_limit(request)
     user = await get_user(request)
+    if body.isolation == "vm" and not user:
+        raise HTTPException(401, "Sign in to run on a fresh VM (each one is a real, billed Vultr server).")
     ds = await get_dataset(body.dataset_id)
     if not ds:
         raise HTTPException(404, "Dataset not found. Upload it again.")
     rec = store.RunRecorder(user["id"] if user else None, ds, body.question)
     await rec.start()
 
-    ACTIVE[rec.id] = {"stop": False, "job": None}
+    ACTIVE[rec.id] = {"stop": False, "job": None, "vm": None}
 
     def check_stop():
         if ACTIVE.get(rec.id, {}).get("stop"):
@@ -278,7 +384,7 @@ async def ask(body: Ask, request: Request):
         job = uuid.uuid4().hex[:12]
         ACTIVE[rec.id]["job"] = job
         try:
-            res = await run_in_sandbox(code, dataset_files(ds), job_id=job)
+            res = await run_in_sandbox(code, dataset_files(ds), job_id=job, vm=ACTIVE[rec.id]["vm"])
         finally:
             ACTIVE[rec.id]["job"] = None
         if res["status"] == "stopped":
@@ -298,6 +404,9 @@ async def ask(body: Ask, request: Request):
         q_safety = {k: safety[k] for k in ("status", "categories", "model", "latency_s")}
         q_risky = bool(q_flags) or safety["status"] == "unsafe"
         yield {"type": "preflight", "stage": "question", "risky": q_risky, "flags": q_flags, "safety": q_safety}
+        if body.isolation == "vm":
+            async for item in _provision(rec.id):
+                yield item
         if data_flags:
             yield {"type": "preflight", "stage": "data", "risky": True, "cells": data_flags[:5]}
 
@@ -478,7 +587,7 @@ async def ask(body: Ask, request: Request):
         answer, status, total, verified = None, "failed", None, None
         t0 = time.monotonic()
         try:
-            async for item in agent():
+            async for item in _with_teardown(rec.id, agent()):
                 if isinstance(item, str):
                     yield item
                     continue
@@ -515,16 +624,18 @@ BROWSE_TIMEOUT_S = int(os.environ.get("BROWSE_TIMEOUT_S", "90"))
 class Research(BaseModel):
     goal: str = Field(..., min_length=5, max_length=1500)
     domains: list[str] = Field(default_factory=list, max_length=5)
+    isolation: str = Field("container", pattern="^(container|vm)$")
 
 
-async def browse_in_sandbox(actions: list, domains: list[str], job_id: str) -> dict:
-    r = await _runner.post(f"{RUNNER_URL}/browse", headers={"X-Runner-Token": RUNNER_TOKEN},
+async def browse_in_sandbox(actions: list, domains: list[str], job_id: str, vm: dict | None = None) -> dict:
+    url, token = _target(vm)
+    r = await _runner.post(f"{url}/browse", headers={"X-Runner-Token": token},
                            json={"actions": actions, "allow_domains": domains,
                                  "timeout_s": BROWSE_TIMEOUT_S, "job_id": job_id},
                            timeout=BROWSE_TIMEOUT_S + 60)
     if r.status_code != 200:
         raise RuntimeError(f"Browser sandbox error {r.status_code}: {r.text[:200]}")
-    return r.json()
+    return _mark_machine(r.json(), vm)
 
 
 async def _approval_flow(run_id: str, payload: dict, holder: dict):
@@ -573,10 +684,12 @@ async def _recorded_stream(rec, agen):
 async def research_run(body: Research, request: Request):
     rate_limit(request)
     user = await get_user(request)
+    if body.isolation == "vm" and not user:
+        raise HTTPException(401, "Sign in to run on a fresh VM (each one is a real, billed Vultr server).")
     owner = user["id"] if user else None
     rec = store.RunRecorder(owner, None, body.goal)
     await rec.start()
-    ACTIVE[rec.id] = {"stop": False, "job": None}
+    ACTIVE[rec.id] = {"stop": False, "job": None, "vm": None}
 
     def check_stop():
         if ACTIVE.get(rec.id, {}).get("stop"):
@@ -593,6 +706,9 @@ async def research_run(body: Research, request: Request):
         q_safety = {k: safety[k] for k in ("status", "categories", "model", "latency_s")}
         yield {"type": "preflight", "stage": "question", "risky": bool(q_flags) or safety["status"] == "unsafe",
                "flags": q_flags, "safety": q_safety}
+        if body.isolation == "vm":
+            async for item in _provision(rec.id):
+                yield item
 
         # 1. Scope: which sites may the browser reach at all?
         yield {"type": "step", "id": "scope", "status": "running", "title": "Choosing which sites to visit"}
@@ -683,7 +799,7 @@ async def research_run(body: Research, request: Request):
             ACTIVE[rec.id]["job"] = job
             yield {"type": "step", "id": f"browse{turn}", "status": "running", "title": "Browsing in the sandbox"}
             try:
-                res = await browse_in_sandbox(chk["actions"], domains, job)
+                res = await browse_in_sandbox(chk["actions"], domains, job, vm=ACTIVE[rec.id]["vm"])
             finally:
                 ACTIVE[rec.id]["job"] = None
             if res["status"] == "stopped":
@@ -753,7 +869,7 @@ async def research_run(body: Research, request: Request):
         yield {"type": "done", "total_s": round(time.monotonic() - started, 2), "status": "done",
                "run_id": rec.id, "saved": db.ENABLED, "verified": vstatus}
 
-    return StreamingResponse(_recorded_stream(rec, agent()), media_type="text/event-stream",
+    return StreamingResponse(_recorded_stream(rec, _with_teardown(rec.id, agent())), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
@@ -771,7 +887,8 @@ async def stop_run(run_id: str):
     killed = False
     if run.get("job"):
         try:
-            r = await _runner.post(f"{RUNNER_URL}/kill/{run['job']}", headers={"X-Runner-Token": RUNNER_TOKEN}, timeout=10)
+            url, token = _target(run.get("vm"))
+            r = await _runner.post(f"{url}/kill/{run['job']}", headers={"X-Runner-Token": token}, timeout=10)
             killed = r.status_code == 200 and r.json().get("killed", False)
         except Exception:  # noqa: BLE001
             pass
@@ -782,7 +899,8 @@ async def stop_run(run_id: str):
 
 @app.get("/api/config")
 async def config():
-    return {"auth": db.ENABLED and bool(db.ANON_KEY), "supabase_url": db.URL, "supabase_anon_key": db.ANON_KEY}
+    return {"auth": db.ENABLED and bool(db.ANON_KEY), "supabase_url": db.URL, "supabase_anon_key": db.ANON_KEY,
+            "fresh_vm": disposable.ENABLED, "fresh_vm_max_age_min": disposable.MAX_AGE_MIN}
 
 
 @app.get("/api/me")
