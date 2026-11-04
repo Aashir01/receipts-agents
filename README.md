@@ -76,7 +76,8 @@ Every run prints a **receipt**: job ID, model, SHA-256 of the exact code, exit c
 ## Repository layout
 
 ```
-app/          Web app + agent (FastAPI, single-page UI), deployed by Coolify from app/Dockerfile
+Dockerfile    Builds the web app; Coolify deploys from here
+app/          Web app + agent (FastAPI, single-page UI)
   main.py     API, agent loop, receipts, rate limiting
   llm.py      Vultr Serverless Inference client with fallback
   prompts.py  Plan / code / fix / explain prompts and the fixed profiling script
@@ -103,7 +104,7 @@ ufw allow from <APP_PRIVATE_IP> to any port 8080 proto tcp
 
 **App server (Vultr Marketplace: Coolify, VPC attached)**
 
-Create a Coolify application from this repository with build pack *Dockerfile*, base directory `/app`, port `8080`, health check `/api/health`, and the variables in `.env.example`. Then verify from the app server:
+Create a Coolify application from this repository with build pack *Dockerfile* (the root `Dockerfile`, base directory `/`), port `8080`, health check `/api/health`, and the variables in `.env.example`. Then verify from the app server:
 
 ```bash
 RUNNER_URL=http://<EXECUTOR_PRIVATE_IP>:8080 RUNNER_TOKEN=... python3 runner/test-runner.py
