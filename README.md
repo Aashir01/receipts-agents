@@ -111,7 +111,9 @@ ufw allow from <APP_PRIVATE_IP> to any port 8080 proto tcp
 
 **App server (Vultr Marketplace: Coolify, VPC attached)**
 
-Create a Coolify application from this repository with build pack *Dockerfile* (the root `Dockerfile`, base directory `/`), port `8080`, health check `/api/health`, and the variables in `.env.example`. Then verify from the app server:
+Create a Coolify application from this repository with build pack *Dockerfile* (the root `Dockerfile`, base directory `/`), port `8080`, health check `/api/health`, and the variables in `.env.example`. Self-hosted Supabase runs as a Coolify service on the same VM. Docker does not hairpin traffic from a container on the `coolify` network back through the host's public IP to Traefik, so the app is given Traefik's internal address for the Supabase domain with a Coolify custom Docker option, `--add-host=db.<your-domain>:<coolify-proxy IP on the coolify network>` (find it with `docker inspect coolify-proxy`). TLS still terminates at Traefik with the real certificate. `/api/health` reports database reachability and key roles (never the keys).
+
+Then verify from the app server:
 
 ```bash
 RUNNER_URL=http://<EXECUTOR_PRIVATE_IP>:8080 RUNNER_TOKEN=... python3 runner/test-runner.py
