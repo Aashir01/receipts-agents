@@ -197,7 +197,7 @@ async def ask(body: Ask, request: Request):
             # 1. Plan
             yield sse({"type": "step", "id": "plan", "status": "running", "title": "Planning"})
             plan = await llm.chat(prompts.plan_messages(body.question, ds["filename"], ds["profile"]),
-                                  max_tokens=300)
+                                  max_tokens=3000)
             yield sse({"type": "step", "id": "plan", "status": "done", "title": "Plan",
                        "content": plan["text"], "model": plan["model"], "latency_s": plan["latency_s"]})
 
@@ -208,7 +208,7 @@ async def ask(body: Ask, request: Request):
             for attempt in range(1, MAX_ATTEMPTS + 1):
                 yield sse({"type": "step", "id": f"code{attempt}", "status": "running",
                            "title": "Writing code" if attempt == 1 else f"Fixing code (attempt {attempt})"})
-                reply = await llm.chat(messages, max_tokens=1800)
+                reply = await llm.chat(messages, max_tokens=8000)
                 code, model = llm.extract_code(reply["text"]), reply["model"]
                 yield sse({"type": "code", "attempt": attempt, "code": code, "model": model,
                            "latency_s": reply["latency_s"]})
@@ -241,7 +241,7 @@ async def ask(body: Ask, request: Request):
             if result and result["status"] == "ok":
                 yield sse({"type": "step", "id": "explain", "status": "running", "title": "Writing answer"})
                 ans = await llm.chat(prompts.explain_messages(body.question, code, result["stdout"],
-                                                              result["outputs"]), max_tokens=600)
+                                                              result["outputs"]), max_tokens=3000)
                 yield sse({"type": "answer", "markdown": ans["text"], "model": ans["model"],
                            "grounded_in_job": result["job_id"]})
             else:
