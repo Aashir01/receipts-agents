@@ -249,6 +249,21 @@
   .badge { display: inline-block; margin-top: 8px; padding: 3px 10px; border-radius: 999px; font-size: 12.5px; font-weight: 600; }
   .badge.ok { background: #E6F4EC; color: var(--pass); } .badge.no { background: #FDECEE; color: var(--stamp); }
   .badge.neutral { background: #EEF1F4; color: var(--muted); }
+  .modes { display: inline-flex; gap: 4px; padding: 4px; background: #DDE3EA; border-radius: 10px; margin-bottom: 14px; }
+  .modes button { border: 0; background: transparent; padding: 8px 14px; border-radius: 7px; cursor: pointer; font-weight: 500; color: var(--muted); }
+  .modes button[aria-selected="true"] { background: #fff; color: var(--ink); box-shadow: 0 1px 2px #16202E22; }
+  .acts { margin: 6px 0 0; padding-left: 18px; font: 12px/1.6 var(--mono); }
+  .acts li.risky { color: var(--stamp); }
+  .shots { display: grid; gap: 10px; margin-top: 10px; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
+  .shots figure { margin: 0; background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 6px; }
+  .shots img { width: 100%; aspect-ratio: 1280 / 640; object-fit: cover; object-position: top; display: block; border-radius: 4px; cursor: zoom-in; }
+  .shots img.full { aspect-ratio: auto; cursor: zoom-out; }
+  .shots figcaption { font-size: 12px; color: var(--muted); margin-top: 4px; word-break: break-all; }
+  .egress { margin: 8px 0 0; padding: 0; list-style: none; font-size: 12.5px; }
+  .egress li.blocked { color: var(--stamp); } .egress li.egress { color: var(--pass); }
+  .rows { overflow: auto; margin-top: 8px; }
+  .rows table { border-collapse: collapse; font-size: 12.5px; }
+  .rows th, .rows td { border-bottom: 1px solid var(--line); padding: 4px 8px; text-align: left; white-space: nowrap; max-width: 260px; overflow: hidden; text-overflow: ellipsis; }
   .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 </style>
 </head>
@@ -256,7 +271,7 @@
 <header class="bar">
   <div class="brand">
     <h1>Receipts</h1>
-    <p>A data analyst that shows its work. Every line of code runs in a sealed sandbox on Vultr.</p>
+    <p>An agent that shows its work. Its code and its browser run in a sealed sandbox on Vultr.</p>
   </div>
   <div class="acct" id="acct"></div>
   <span class="pill" id="status"><span class="dot"></span><span>Checking sandbox…</span></span>
@@ -287,7 +302,24 @@
   <!-- agent -->
   <div class="col-agent">
     <section class="block banner" id="banner" hidden></section>
-    <section class="block ask">
+    <div class="modes" role="tablist" aria-label="What should the agent do?">
+      <button type="button" role="tab" id="tab-analyze" aria-selected="true" aria-controls="askbox">Analyze a file</button>
+      <button type="button" role="tab" id="tab-research" aria-selected="false" aria-controls="research">Research the web</button>
+    </div>
+    <section class="block ask" id="research" hidden>
+      <h2>Research the web</h2>
+      <p class="hint">A real browser runs in a sealed sandbox that can reach only the sites you approve. Anything that submits, buys or sends waits for your OK.</p>
+      <label for="goal" class="sr">Research goal</label>
+      <textarea id="goal" placeholder="Describe what to find or do, and on which site."></textarea>
+      <label class="field">Sites the browser may visit (optional, comma separated)<input id="sites" placeholder="Leave empty and the agent will propose them for your approval"></label>
+      <div class="suggest" id="rsuggest"></div>
+      <div class="row">
+        <button class="btn" id="rrun" type="button">Run research</button>
+        <button class="btn ghost" id="rstop" type="button" hidden>Stop</button>
+        <span class="muted" id="rinfo"></span>
+      </div>
+    </section>
+    <section class="block ask" id="askbox">
       <h2>Ask a question</h2>
       <p class="hint">The agent plans, writes Python, runs it, fixes its own errors, and only reports numbers the code actually printed.</p>
       <label for="q" class="sr">Question about your data</label>
@@ -301,7 +333,7 @@
     </section>
     <section class="block" style="margin-top:16px">
       <h2>What the agent is doing</h2>
-      <ol class="timeline" id="timeline"><li class="empty">Nothing yet. Pick a sample file to see a full run in about 20 seconds.</li></ol>
+      <ol class="timeline" id="timeline"><li class="empty">Nothing yet. Pick a sample file, or switch to Research the web, to see a full run in about 20 seconds.</li></ol>
     </section>
   </div>
 
@@ -461,6 +493,7 @@ $("#run").onclick = run;
 $("#stop").onclick = async () => {
   if (!currentRunId) return;
   $("#stop").disabled = true; $("#stop").textContent = "Stopping…";
+  $("#rstop").disabled = true; $("#rstop").textContent = "Stopping…";
   try { await api(`/api/runs/${currentRunId}/stop`, { method: "POST" }); } catch {}
 };
 $("#q").addEventListener("keydown", e => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) run(); });
@@ -480,24 +513,79 @@ async function run() {
     const res = await api("/api/ask", { method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ dataset_id: dataset.dataset_id, question }) });
     if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || `HTTP ${res.status}`); }
-    const reader = res.body.getReader(), dec = new TextDecoder();
-    let buf = "";
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buf += dec.decode(value, { stream: true });
-      let i;
-      while ((i = buf.indexOf("\n\n")) >= 0) {
-        const chunk = buf.slice(0, i); buf = buf.slice(i + 2);
-        if (chunk.startsWith("data: ")) handle(JSON.parse(chunk.slice(6)), tl, steps);
-      }
-    }
+    await readStream(res, tl, steps);
   } catch (e) {
     tl.append(el("li", "error", `Run stopped: ${e.message}`));
   } finally {
     clearInterval(tick); busy = false; $("#run").textContent = "Run analysis"; setReady(!!dataset);
     $("#stop").hidden = true;
   }
+}
+
+async function readStream(res, tl, steps) {
+  const reader = res.body.getReader(), dec = new TextDecoder();
+  let buf = "";
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true });
+    let i;
+    while ((i = buf.indexOf("\n\n")) >= 0) {
+      const chunk = buf.slice(0, i); buf = buf.slice(i + 2);
+      if (chunk.startsWith("data: ")) handle(JSON.parse(chunk.slice(6)), tl, steps);
+    }
+  }
+}
+
+/* ---------- web research ---------- */
+const RSUGGEST = [
+  "Find the 5 cheapest books in the Travel category on books.toscrape.com, with price and star rating.",
+  "Collect the first 10 quotes tagged inspirational on quotes.toscrape.com, with their authors.",
+  "Fill in the pizza order form at httpbin.org/forms/post for customer Aashir, size medium, toppings bacon and mushroom, and submit it.",
+];
+function setMode(mode) {
+  const research = mode === "research";
+  $("#tab-analyze").setAttribute("aria-selected", String(!research));
+  $("#tab-research").setAttribute("aria-selected", String(research));
+  $("#askbox").hidden = research; $("#research").hidden = !research;
+}
+$("#tab-analyze").onclick = () => setMode("analyze");
+$("#tab-research").onclick = () => setMode("research");
+for (const g of RSUGGEST) {
+  const c = el("button", "chip", g); c.type = "button";
+  c.onclick = () => { $("#goal").value = g; $("#goal").focus(); };
+  $("#rsuggest").append(c);
+}
+$("#rstop").onclick = () => $("#stop").onclick();
+$("#rrun").onclick = async () => {
+  const goal = $("#goal").value.trim();
+  if (goal.length < 5 || busy) return;
+  busy = true; viewOnly = false; currentRunId = null; $("#banner").hidden = true;
+  $("#rrun").disabled = true; $("#rrun").textContent = "Researching…"; setReady(!!dataset);
+  const stopBtn = $("#rstop"); stopBtn.hidden = false; stopBtn.disabled = false; stopBtn.textContent = "Stop";
+  const tl = $("#timeline"); tl.replaceChildren(); const steps = {};
+  const t0 = performance.now();
+  const tick = setInterval(() => $("#rinfo").textContent = `${((performance.now() - t0) / 1000).toFixed(0)} s`, 500);
+  try {
+    const domains = $("#sites").value.split(",").map(x => x.trim()).filter(Boolean);
+    const res = await api("/api/research", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ goal, domains }) });
+    if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || `HTTP ${res.status}`); }
+    await readStream(res, tl, steps);
+  } catch (e) {
+    tl.append(el("li", "error", `Research stopped: ${e.message}`));
+  } finally {
+    clearInterval(tick); busy = false; $("#rrun").disabled = false; $("#rrun").textContent = "Run research";
+    stopBtn.hidden = true; setReady(!!dataset);
+  }
+};
+
+function useDataset(info) {
+  dataset = info; $("#profile").hidden = false; renderProfile(info); renderSuggestions(info.filename);
+  if (info.profiling_receipt) printSlip({ title: "Profile file", receipt: info.profiling_receipt,
+    events: info.profiling_events, limits: info.limits, note: `${info.filename}, sha256 ${info.sha256.slice(0, 12)}…` });
+  setMode("analyze"); $("#q").value = ""; setReady(true); $("#q").focus();
+  window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
 function stepNode(tl, steps, id, title) {
@@ -511,7 +599,7 @@ function stepNode(tl, steps, id, title) {
 
 function handle(ev, tl, steps) {
   if (ev.type === "run") {
-    currentRunId = ev.run_id;
+    currentRunId = ev.run_id; steps._mode = ev.mode || "analyze";
   } else if (ev.type === "step") {
     const li = stepNode(tl, steps, ev.id, ev.title);
     li.querySelector("h4").textContent = ev.title;
@@ -547,6 +635,77 @@ function handle(ev, tl, steps) {
     }
     printSlip({ title: ev.attempt > 1 ? `Run · attempt ${ev.attempt}` : "Run analysis", receipt: ev.receipt,
                 events: r.events, limits: r.limits, selfHealed: ev.attempt > 1 && r.status === "ok" });
+  } else if (ev.type === "scope") {
+    const li = steps.scope || stepNode(tl, steps, "scope", "Sites");
+    li.className = "step done";
+    li.querySelector("h4").textContent = `Sites: ${ev.domains.join(", ")}`;
+    li.querySelector(".sub").textContent = ev.source === "you" ? "Chosen by you. The browser cannot reach anything else."
+      : `Proposed by ${ev.model}. Waiting for your approval; the browser cannot reach anything else.`;
+  } else if (ev.type === "browse_plan") {
+    const li = el("li", "step " + (ev.refused.length ? "fail" : ev.risky.length ? "blocked" : "done"));
+    li.append(el("span", "mark"), el("h4", null, ev.refused.length ? "Planned actions refused before running"
+      : ev.risky.length ? "Planned actions include something that submits" : `Planned ${ev.actions.length} browser actions`));
+    const ul = el("ul", "acts");
+    for (const a of ev.actions) {
+      const txt = a.type + " " + (a.url || a.text || a.selector || a.key || "") + (a.value != null ? ` = "${a.value}"` : "");
+      ul.append(el("li", ev.risky.some(r => r.includes(a.text || a.selector || "§")) ? "risky" : "", txt.slice(0, 160)));
+    }
+    li.append(ul);
+    if (ev.refused.length) { const r = el("ul", "findings"); ev.refused.forEach(x => r.append(el("li", null, x))); li.append(r); }
+    steps[`scan${ev.turn}`] = li; tl.append(li);
+  } else if (ev.type === "browse") {
+    const li = steps[`browse${ev.turn}`] || stepNode(tl, steps, `browse${ev.turn}`, "Browsed");
+    const r = ev.result, blocked = r.events.some(e => e.kind === "blocked");
+    li.className = "step " + (r.status === "ok" ? (blocked ? "blocked" : "done") : "fail");
+    li.querySelector("h4").textContent = r.status === "ok" ? (blocked ? "Browsed, and the proxy blocked other sites" : "Browsed in the sandbox") : `Browser ${r.status}`;
+    li.querySelector(".sub").textContent = `Job ${r.job_id}, ${r.duration_s} s, ended on ${ev.final_url || "?"}`;
+    const eg = el("ul", "egress");
+    r.events.filter(e => e.kind === "egress" || e.kind === "blocked").forEach(e => eg.append(el("li", e.kind, e.detail)));
+    if (eg.childElementCount) li.append(eg);
+    const imgs = ev.outputs.filter(o => o.mime === "image/png");
+    if (imgs.length) {
+      const g = el("div", "shots");
+      for (const o of imgs) {
+        const f = el("figure"); const im = el("img"); im.src = o.data_url || o.url; im.loading = "lazy"; im.onclick = () => im.classList.toggle("full");
+        const stepFor = ev.steps.find(s => s.screenshot === o.name);
+        im.alt = `Screenshot ${o.name} of ${stepFor?.url || "the page"}`;
+        f.append(im, el("figcaption", null, `${o.name}: ${stepFor ? stepFor.type + " " + (stepFor.url || "") : ""}`)); g.append(f);
+      }
+      li.append(g);
+    }
+    const ex = ev.steps.filter(s => s.texts?.length);
+    if (ex.length) {
+      const d = el("details"); d.append(el("summary", null, `Extracted text (${ex.reduce((n, s) => n + s.texts.length, 0)} items)`));
+      d.append(el("pre", "out", ex.map(s => s.texts.join("\n")).join("\n---\n"))); li.append(d);
+    }
+    const fails = ev.steps.filter(s => !s.ok);
+    if (fails.length) li.append(el("pre", "err", fails.map(s => `${s.type}: ${s.error}`).join("\n")));
+    printSlip({ title: `Browser turn ${ev.turn}`, receipt: ev.receipt, events: r.events, limits: r.limits });
+  } else if (ev.type === "web_verify") {
+    const li = el("li", "step " + (ev.status === "verified" ? "done" : ev.status === "mismatch" ? "fail" : "blocked"));
+    li.append(el("span", "mark"), el("h4", null, ev.status === "verified" ? "Evidence check: verified"
+      : ev.status === "mismatch" ? "Evidence check: something does not match" : "Evidence check: inconclusive"));
+    const e = ev.evidence, v = ev.vision;
+    li.append(el("div", "sub", `${e.matched} of ${e.total} quoted facts found word for word in pages the browser actually loaded. `
+      + (v.status === "unavailable" ? "Vision check unavailable." : `${v.model} looked at the final screenshot: ${v.status}${v.notes ? " (" + v.notes + ")" : ""}, ${v.latency_s} s.`)));
+    if (e.checks.length) { const ul = el("ul", "checks"); e.checks.forEach(c => ul.append(el("li", c.found ? "ok" : "no", c.quote))); li.append(ul); }
+    tl.append(li);
+  } else if (ev.type === "records") {
+    const li = el("li", "step done");
+    li.append(el("span", "mark"), el("h4", null, `Handed ${ev.count} rows to the analyst`),
+      el("div", "sub", "Saved as a dataset and profiled inside the sandbox, ready for questions."));
+    if (ev.preview.length) {
+      const keys = Object.keys(ev.preview[0]).slice(0, 6);
+      const box = el("div", "rows"), t = el("table"), hr = el("tr");
+      keys.forEach(k => hr.append(el("th", null, k))); t.append(hr);
+      ev.preview.forEach(r => { const tr = el("tr"); keys.forEach(k => tr.append(el("td", null, String(r[k] ?? "")))); t.append(tr); });
+      box.append(t); li.append(box);
+    }
+    if (ev.dataset && !viewOnly) {
+      const b = el("button", "btn ghost", "Analyze this data"); b.type = "button";
+      b.onclick = () => useDataset(ev.dataset); const a = el("div", "actions"); a.append(b); li.append(a);
+    }
+    tl.append(li);
   } else if (ev.type === "stage") {
     tl.append(el("li", "stagehead", ev.title));
   } else if (ev.type === "explore") {
@@ -616,12 +775,16 @@ function handle(ev, tl, steps) {
     }
   } else if (ev.type === "approval") {
     const li = steps[`scan${ev.attempt}`] || tl.lastElementChild;
-    const card = el("div", "approval"); card.id = `appr-${ev.id}`;
-    card.append(el("h5", null, "Approval needed before this code runs"),
-      el("p", null, "Nothing has run yet. If you approve, it still runs only inside the sealed sandbox, which has no network and no secrets. If you reject, the agent rewrites the code."));
+    const card = el("div", "approval"); card.id = `appr-${ev.id}`; card.dataset.kind = ev.kind || "code";
+    const copy = {
+      scope: ["Approve the sites this browser may reach", "Nothing has been opened yet. The browser will be able to reach only these sites; every other request is blocked by its proxy.", "Allow these sites", "Don't browse"],
+      browser: ["Approval needed before these browser actions", "These actions may submit or change something on a real website. Nothing has run yet.", "Approve and run in sandbox", "Reject"],
+    }[ev.kind] || ["Approval needed before this code runs", "Nothing has run yet. If you approve, it still runs only inside the sealed sandbox, which has no network and no secrets. If you reject, the agent rewrites the code.", "Approve and run in sandbox", "Reject and rewrite"];
+    card.append(el("h5", null, copy[0]), el("p", null, copy[1]));
+    if (ev.findings?.length && ev.kind) { const ul = el("ul", "findings"); ev.findings.forEach(f => ul.append(el("li", null, f.detail))); card.append(ul); }
     const row = el("div", "row");
-    const ok = el("button", "btn danger", "Approve and run in sandbox"); ok.type = "button";
-    const no = el("button", "btn ghost", "Reject and rewrite"); no.type = "button";
+    const ok = el("button", "btn danger", copy[2]); ok.type = "button";
+    const no = el("button", "btn ghost", copy[3]); no.type = "button";
     const send = async (decision) => {
       ok.disabled = no.disabled = true;
       try { await api(`/api/approvals/${ev.id}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ decision }) }); }
@@ -634,8 +797,13 @@ function handle(ev, tl, steps) {
     const card = document.getElementById(`appr-${ev.id}`);
     if (card) {
       card.querySelector(".row")?.remove();
-      card.append(el("div", "decided",
-        ev.decision === "approve" ? "Approved by a human. Ran in the sandbox." : ev.decision === "reject" ? "Rejected by a human. Nothing ran; the agent rewrote the code." : "No decision in time. Nothing ran."));
+      const k = card.dataset.kind;
+      const said = {
+        scope: { approve: "Approved by you. The browser may reach only these sites.", reject: "Rejected by you. Nothing was opened." },
+        browser: { approve: "Approved by you. Ran in the sandboxed browser.", reject: "Rejected by you. Nothing ran; the agent was told not to do it." },
+        code: { approve: "Approved by you. Ran in the sandbox.", reject: "Rejected by you. Nothing ran; the agent rewrote the code." },
+      }[k] || {};
+      card.append(el("div", "decided", said[ev.decision] || (ev.decision === "stopped" ? "Stopped. Nothing ran." : "No decision in time. Nothing ran.")));
     }
     if (ev.decision !== "approve") printHold(ev);
   } else if (ev.type === "security") {
@@ -649,8 +817,10 @@ function handle(ev, tl, steps) {
     li.append(el("span", "mark"), el("h4", null, "Answer"));
     const box = el("div", "answer"); box.innerHTML = md(ev.markdown); li.append(box);
     if (ev.grounded_in_job) li.append(el("div", "grounded", `Every number above was printed by sandbox job ${ev.grounded_in_job}.`));
-    if (ev.verified === "verified") li.append(el("span", "badge ok", "Verified by an independent recomputation"));
-    else if (ev.verified === "mismatch") li.append(el("span", "badge no", "Independent recomputation disagrees"));
+    const web = steps._mode === "research";
+    if (web && ev.grounded_in_job) li.querySelector(".grounded").textContent = `Based on pages loaded by sandboxed browser job ${ev.grounded_in_job}.`;
+    if (ev.verified === "verified") li.append(el("span", "badge ok", web ? "Every quote found in the pages the browser loaded" : "Verified by an independent recomputation"));
+    else if (ev.verified === "mismatch") li.append(el("span", "badge no", web ? "Some claims are not backed by the pages" : "Independent recomputation disagrees"));
     else if (ev.verified === "inconclusive") li.append(el("span", "badge neutral", "Verification inconclusive"));
     const acts = el("div", "actions");
     if (ev.receipt_id) {
@@ -699,6 +869,7 @@ function printSlip({ title, receipt, events, limits, note, selfHealed, stamp }) 
     s.append(line("data flags", String(pf.data_flags)));
     s.append(line("code scan", pf.code_findings ? `${pf.code_findings} risky` : "clean"));
     s.append(line("approval", pf.approval));
+    if (pf.sites) s.append(line("sites", pf.sites));
   }
   for (const e of events) s.append(el("div", "ev " + e.kind, `› ${e.detail}`));
   for (const o of receipt.outputs) s.append(line(o.name, o.sha256.slice(0, 12) + "…"));
@@ -712,7 +883,7 @@ function printSlip({ title, receipt, events, limits, note, selfHealed, stamp }) 
 function printHold(ev) {
   $("#emptyroll")?.remove();
   const s = el("div", "slip print");
-  s.append(el("div", "title", `Pre-flight hold · attempt ${ev.attempt}`));
+  s.append(el("div", "title", `Pre-flight hold, attempt ${ev.attempt}`));
   s.append(line("risky actions", String(ev.findings)));
   s.append(line("decision", ev.decision === "reject" ? "rejected by you" : "timed out"));
   s.append(line("executed", "nothing"));

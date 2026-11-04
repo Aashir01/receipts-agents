@@ -158,3 +158,54 @@ async def safety_check(text: str) -> dict:
         out["raw"] = f"{type(e).__name__}"
         out["latency_s"] = round(time.monotonic() - start, 2)
         return out
+
+
+VISION_MODEL = os.environ.get("VISION_MODEL", "nemotron-3-nano-omni-30b-a3b-reasoning")
+
+
+async def vision_check(image_b64: str, claims: str) -> dict:
+    """Ask a vision model whether a screenshot supports the agent's claims.
+    Returns {status: consistent|inconsistent|unavailable, notes, model, latency_s}. Never raises."""
+    start = time.monotonic()
+    out = {"status": "unavailable", "notes": "", "model": VISION_MODEL, "latency_s": 0}
+    if not API_KEY or not image_b64:
+        return out
+    prompt = ("You are checking a browser agent's work. Look at the screenshot and decide whether it is "
+              "consistent with the claims below (the claims may cover more than one page; judge what is "
+              "visible). Reply with ONLY JSON: {\"consistent\": true|false, \"notes\": \"one sentence\"}.\n\n"
+              f"Claims:\n{claims[:2500]}")
+    try:
+        r = await _client.post(
+            f"{BASE_URL}/chat/completions",
+            headers={"Authorization": f"Bearer {API_KEY}"},
+            json={"model": VISION_MODEL, "max_tokens": 1500, "temperature": 0,
+                  "messages": [{"role": "user", "content": [
+                      {"type": "text", "text": prompt},
+                      {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{image_b64}"}}]}]},
+            timeout=60,
+        )
+        out["latency_s"] = round(time.monotonic() - start, 2)
+        if r.status_code != 200:
+            out["notes"] = f"vision model returned HTTP {r.status_code}"
+            return out
+        msg = r.json()["choices"][0]["message"]
+        raw = strip_thinking(msg.get("content") or "")
+        try:
+            data = json.loads(raw[raw.index("{"): raw.rindex("}") + 1])
+            verdict = data.get("consistent", data.get("status"))
+            if isinstance(verdict, str):
+                verdict = verdict.strip().lower() in ("true", "yes", "consistent")
+            out["status"] = "consistent" if verdict is True else "inconsistent"
+            out["notes"] = str(data.get("notes", ""))[:300]
+        except (ValueError, AttributeError):
+            low = raw.lower()
+            if "inconsistent" in low or "not consistent" in low:
+                out["status"] = "inconsistent"
+            elif "consistent" in low or low.startswith("yes"):
+                out["status"] = "consistent"
+            out["notes"] = raw[:300]
+        return out
+    except Exception as e:  # noqa: BLE001
+        out["notes"] = type(e).__name__
+        out["latency_s"] = round(time.monotonic() - start, 2)
+        return out

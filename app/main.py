@@ -28,6 +28,7 @@ import db
 import guard
 import llm
 import prompts
+import research
 import store
 import verify
 
@@ -503,6 +504,246 @@ async def ask(body: Ask, request: Request):
             await rec.finish(status, answer, total, v)
 
     return StreamingResponse(stream(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+# ---------- web research agent (Pattern B) ----------
+
+BROWSE_TIMEOUT_S = int(os.environ.get("BROWSE_TIMEOUT_S", "90"))
+
+
+class Research(BaseModel):
+    goal: str = Field(..., min_length=5, max_length=1500)
+    domains: list[str] = Field(default_factory=list, max_length=5)
+
+
+async def browse_in_sandbox(actions: list, domains: list[str], job_id: str) -> dict:
+    r = await _runner.post(f"{RUNNER_URL}/browse", headers={"X-Runner-Token": RUNNER_TOKEN},
+                           json={"actions": actions, "allow_domains": domains,
+                                 "timeout_s": BROWSE_TIMEOUT_S, "job_id": job_id},
+                           timeout=BROWSE_TIMEOUT_S + 60)
+    if r.status_code != 200:
+        raise RuntimeError(f"Browser sandbox error {r.status_code}: {r.text[:200]}")
+    return r.json()
+
+
+async def _approval_flow(run_id: str, payload: dict, holder: dict):
+    """Ask a human, keep the stream alive while waiting, and report the decision."""
+    aid = uuid.uuid4().hex
+    APPROVALS[aid] = {"event": asyncio.Event(), "decision": None, "run_id": run_id}
+    yield {"type": "approval", "id": aid, "timeout_s": APPROVAL_TIMEOUT_S, **payload}
+    async for keep_alive in _wait_for_decision(aid):
+        yield keep_alive
+    holder["decision"] = APPROVALS.pop(aid, {}).get("decision") or "timeout"
+    yield {"type": "approval_result", "id": aid, "attempt": payload.get("attempt", 0),
+           "decision": holder["decision"], "findings": len(payload.get("findings", []))}
+
+
+async def _recorded_stream(rec, agen):
+    answer, status, total, verified = None, "failed", None, None
+    t0 = time.monotonic()
+    try:
+        async for item in agen:
+            if isinstance(item, str):
+                yield item
+                continue
+            if item["type"] == "answer":
+                answer = item["markdown"]
+            if item["type"] == "done":
+                status, total, verified = item["status"], item["total_s"], item.get("verified")
+            await rec.event(item)
+            yield sse(item)
+    except Stopped:
+        status, total = "stopped", round(time.monotonic() - t0, 2)
+        for item in ({"type": "stopped", "message": "Stopped by you. Any running sandbox container was killed."},
+                     {"type": "done", "total_s": total, "status": "stopped", "run_id": rec.id, "saved": db.ENABLED}):
+            await rec.event(item)
+            yield sse(item)
+    except Exception as e:  # noqa: BLE001
+        err = {"type": "error", "message": f"{type(e).__name__}: {str(e)[:300]}"}
+        await rec.event(err)
+        yield sse(err)
+    finally:
+        ACTIVE.pop(rec.id, None)
+        v = verified if verified in ("verified", "mismatch") else ("skipped" if status == "done" else None)
+        await rec.finish(status, answer, total, v)
+
+
+@app.post("/api/research")
+async def research_run(body: Research, request: Request):
+    rate_limit(request)
+    user = await get_user(request)
+    owner = user["id"] if user else None
+    rec = store.RunRecorder(owner, None, body.goal)
+    await rec.start()
+    ACTIVE[rec.id] = {"stop": False, "job": None}
+
+    def check_stop():
+        if ACTIVE.get(rec.id, {}).get("stop"):
+            raise Stopped()
+
+    async def agent():
+        started = time.monotonic()
+        yield {"type": "run", "run_id": rec.id, "question": body.goal, "mode": "research"}
+
+        # 0. Pre-flight on the goal
+        yield {"type": "step", "id": "guard-q", "status": "running", "title": "Pre-flight: checking your goal"}
+        q_flags = guard.question_heuristics(body.goal)
+        safety = await llm.safety_check(body.goal)
+        q_safety = {k: safety[k] for k in ("status", "categories", "model", "latency_s")}
+        yield {"type": "preflight", "stage": "question", "risky": bool(q_flags) or safety["status"] == "unsafe",
+               "flags": q_flags, "safety": q_safety}
+
+        # 1. Scope: which sites may the browser reach at all?
+        yield {"type": "step", "id": "scope", "status": "running", "title": "Choosing which sites to visit"}
+        domains = research.clean_domains(body.domains)
+        source = "you" if domains else "agent"
+        hint = f"\nThe user allows only these domains: {', '.join(domains)}" if domains else ""
+        sc = await llm.chat([{"role": "system", "content": research.SCOPE_SYSTEM},
+                             {"role": "user", "content": f"Goal: {body.goal}{hint}"}], max_tokens=1500)
+        sj = research.parse_json(sc["text"]) or {}
+        if not domains:
+            domains = research.clean_domains(sj.get("domains"))
+        if not domains:
+            yield {"type": "answer", "markdown": "I could not tell which website this goal needs. "
+                   "Name the site in the goal or in the Sites box.", "model": None, "grounded_in_job": None}
+            yield {"type": "done", "total_s": round(time.monotonic() - started, 2), "status": "failed",
+                   "run_id": rec.id, "saved": db.ENABLED}
+            return
+        start_url = str(sj.get("start_url") or "")
+        if not research.on_allowlist(start_url, domains):
+            start_url = f"https://{domains[0]}/"
+        yield {"type": "scope", "domains": domains, "start_url": start_url, "source": source,
+               "model": sc["model"], "latency_s": sc["latency_s"]}
+        scope_state = "chosen by you"
+        if source == "agent":
+            holder: dict = {}
+            async for item in _approval_flow(rec.id, {"kind": "scope", "attempt": 0, "findings": [
+                    {"detail": f"Allow the browser to reach only: {', '.join(domains)}"}]}, holder):
+                yield item
+            check_stop()
+            if holder["decision"] != "approve":
+                yield {"type": "answer", "markdown": "Nothing was browsed: the proposed sites were not approved.",
+                       "model": None, "grounded_in_job": None}
+                yield {"type": "done", "total_s": round(time.monotonic() - started, 2), "status": "rejected",
+                       "run_id": rec.id, "saved": db.ENABLED}
+                return
+            scope_state = "approved by you"
+
+        # 2. Browse in turns
+        yield {"type": "stage", "stage": "browse", "title": "Browsing in a sealed sandbox"}
+        messages = [{"role": "system", "content": research.BROWSE_SYSTEM.format(
+                        domains=", ".join(domains), max_actions=research.MAX_ACTIONS)},
+                    {"role": "user", "content": f"Goal: {body.goal}\nStart at: {start_url}"}]
+        seen_texts: list[str] = []
+        last_shot, final, last_job, model = None, None, None, sc["model"]
+        for turn in range(1, research.MAX_TURNS + 1):
+            check_stop()
+            yield {"type": "step", "id": f"plan{turn}", "status": "running", "title": f"Planning browser turn {turn}"}
+            reply = await llm.chat(messages, max_tokens=6000)
+            model = reply["model"]
+            plan = research.parse_json(reply["text"])
+            if not plan:
+                messages += [{"role": "assistant", "content": reply["text"][:2000]},
+                             {"role": "user", "content": "Reply with ONLY the JSON object described."}]
+                yield {"type": "step", "id": f"plan{turn}", "status": "done", "title": "Reply was not valid JSON; asking again",
+                       "model": model, "latency_s": reply["latency_s"]}
+                continue
+            if plan.get("done"):
+                final = plan
+                yield {"type": "step", "id": f"plan{turn}", "status": "done", "title": "Finished browsing",
+                       "model": model, "latency_s": reply["latency_s"]}
+                break
+            chk = research.check_actions(plan.get("actions") or [], domains)
+            yield {"type": "step", "id": f"plan{turn}", "status": "done", "title": f"Browser turn {turn}",
+                   "content": plan.get("thought", ""), "model": model, "latency_s": reply["latency_s"]}
+            yield {"type": "browse_plan", "turn": turn, "actions": chk["actions"], "refused": chk["refused"],
+                   "risky": chk["risky"]}
+            if chk["refused"] or not chk["actions"]:
+                messages += [{"role": "assistant", "content": reply["text"][:3000]},
+                             {"role": "user", "content": "These actions were refused before running: "
+                              + "; ".join(chk["refused"] or ["no valid actions"]) + ". Fix them and reply again."}]
+                continue
+            approval_state = "not needed"
+            if chk["risky"]:
+                holder = {}
+                async for item in _approval_flow(rec.id, {"kind": "browser", "attempt": turn, "actions": chk["actions"],
+                                                          "findings": [{"detail": r} for r in chk["risky"]]}, holder):
+                    yield item
+                check_stop()
+                approval_state = {"approve": "approved by you"}.get(holder["decision"], holder["decision"])
+                if holder["decision"] != "approve":
+                    messages += [{"role": "assistant", "content": reply["text"][:3000]},
+                                 {"role": "user", "content": "The human REJECTED these actions: "
+                                  + "; ".join(chk["risky"]) + ". Do not perform them. Finish with what you have, "
+                                  "or continue read-only."}]
+                    continue
+
+            job = uuid.uuid4().hex[:12]
+            ACTIVE[rec.id]["job"] = job
+            yield {"type": "step", "id": f"browse{turn}", "status": "running", "title": "Browsing in the sandbox"}
+            try:
+                res = await browse_in_sandbox(chk["actions"], domains, job)
+            finally:
+                ACTIVE[rec.id]["job"] = None
+            if res["status"] == "stopped":
+                raise Stopped()
+            last_job = res["job_id"]
+            actions_text = json.dumps(chk["actions"], indent=1)
+            pre = {"question": q_safety["status"], "data_flags": 0, "code_findings": 0, "approval": approval_state,
+                   "sites": f"{', '.join(domains)} ({scope_state})"}
+            rid, _ = await store.save_receipt(kind="browser", code=actions_text, result=res, model=model,
+                                              run_id=rec.id, dataset=None, attempt=turn, preflight=pre)
+            r = res.get("result") or {}
+            for s in r.get("steps", []):
+                seen_texts += s.get("texts") or []
+            seen_texts.append(r.get("page_text") or "")
+            if res["outputs"]:
+                last_shot = res["outputs"][-1]
+            yield {"type": "browse", "turn": turn, "receipt_id": rid if db.ENABLED else None,
+                   "result": {k: res[k] for k in ("job_id", "status", "exit_code", "duration_s", "events", "limits")},
+                   "final_url": r.get("final_url"), "title": r.get("title"),
+                   "steps": [{**{k: s.get(k) for k in ("i", "type", "ok", "error", "url", "status", "screenshot")},
+                              "texts": (s.get("texts") or [])[:15]} for s in r.get("steps", [])],
+                   "outputs": public_outputs(res, rid if db.ENABLED else None),
+                   "receipt": receipt(actions_text, res, model, pre)}
+            messages += [{"role": "assistant", "content": reply["text"][:3000]},
+                         {"role": "user", "content": "Observation:\n" + research.observation(r, res["events"])}]
+
+        if not final:
+            reply = await llm.chat(messages + [{"role": "user", "content":
+                                   "Stop browsing. Finish now with done:true using only what you already extracted."}],
+                                   max_tokens=6000)
+            final = research.parse_json(reply["text"]) or {}
+            final.setdefault("answer", "The agent could not finish within the step limit.")
+
+        # 3. Verify: quotes must exist in what the browser returned; a vision model checks the screenshot
+        yield {"type": "stage", "stage": "verify", "title": "Checking the evidence"}
+        ev = research.evidence_check(final.get("evidence"), seen_texts)
+        claims = (final.get("answer") or "") + "\nEvidence quotes: " + json.dumps(final.get("evidence") or [])[:1500]
+        vis = await llm.vision_check(last_shot["content_b64"] if last_shot else "", claims)
+        if (ev["total"] and ev["matched"] < ev["total"]) or vis["status"] == "inconsistent":
+            vstatus = "mismatch"
+        elif ev["total"] and ev["matched"] == ev["total"]:
+            vstatus = "verified"
+        else:
+            vstatus = "inconclusive"
+        yield {"type": "web_verify", "status": vstatus, "evidence": ev, "vision": vis,
+               "screenshot": last_shot["name"] if last_shot else None}
+
+        # 4. Hand structured data to the analyst
+        records = [x for x in (final.get("records") or []) if isinstance(x, dict)]
+        csv_bytes = research.records_to_csv(records)
+        if csv_bytes:
+            info = await _register(f"web_research_{rec.id[:8]}.csv", csv_bytes, owner)
+            yield {"type": "records", "count": len(records), "preview": records[:8], "dataset": info}
+
+        yield {"type": "answer", "markdown": final.get("answer") or "", "model": model,
+               "grounded_in_job": last_job, "receipt_id": None, "verified": vstatus}
+        yield {"type": "done", "total_s": round(time.monotonic() - started, 2), "status": "done",
+               "run_id": rec.id, "saved": db.ENABLED, "verified": vstatus}
+
+    return StreamingResponse(_recorded_stream(rec, agent()), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 

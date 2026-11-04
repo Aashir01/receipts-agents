@@ -94,7 +94,8 @@ class RunRecorder:
         self.seq = 0
 
     async def start(self) -> None:
-        await db.insert("runs", {"id": self.id, "owner": self.owner, "dataset_id": self.dataset["id"],
+        await db.insert("runs", {"id": self.id, "owner": self.owner,
+                                 "dataset_id": self.dataset["id"] if self.dataset else None,
                                  "question": self.question, "status": "running"})
 
     async def event(self, ev: dict) -> None:

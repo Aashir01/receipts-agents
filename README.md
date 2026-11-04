@@ -1,6 +1,6 @@
 # Receipts
 
-**A data analyst agent that shows its work. Every line of code it writes runs in a sealed sandbox on Vultr, and every number it reports comes with a receipt.**
+**An agent that shows its work. It analyses your files and researches the live web, but every line of code it writes and every page its browser opens runs in a sealed sandbox on Vultr, and every result comes with a receipt.**
 
 Built for the [Vultr: Agent Rush Hackathon](https://lablab.ai/ai-hackathons/vultr-hackathon) on lablab.ai, Challenge 1: *Blast Radius Zero*.
 
@@ -53,6 +53,28 @@ A **Stop** button halts the agent at any point and kills the running sandbox con
 
 Every run prints a **receipt**: job ID, model, SHA-256 of the exact code, exit code, duration, runtime, limits, containment events, and SHA-256 of every output file.
 
+## Research the web (sandboxed browser agent)
+
+The second mode gives the agent a real Chromium browser, still with zero blast radius:
+
+```mermaid
+flowchart LR
+    A[Receipts API] -->|actions + allowlist| R[Runner on VM2]
+    R --> N{{per-task Docker network<br/>--internal, no internet route}}
+    N --- B[gVisor Chromium<br/>fixed action vocabulary]
+    N --- P[Egress proxy<br/>allowlisted domains only]
+    P -->|only approved sites| W[(The web)]
+```
+
+1. **Scope**: you name the sites, or the model proposes them and you approve. The browser can reach nothing else.
+2. **Plan**: the model replies with JSON actions from a fixed vocabulary (`goto`, `click`, `fill`, `select`, `check`, `press`, `extract`, `wait`, `screenshot`). It never writes browser code.
+3. **Action guard**: navigation outside the allowlist is refused before anything runs; typing into password, card or account fields is always refused; anything that submits, buys, sends or signs up pauses for **human approval**.
+4. **Browse**: each turn starts a fresh gVisor container on its own `--internal` network. Its only route out is a per-task egress proxy that allows the approved domains, resolves DNS itself and refuses private, loopback and cloud-metadata addresses (DNS-rebinding safe). Blocked attempts become receipt events. Browser, proxy and network are removed after every turn.
+5. **Evidence check**: the agent must quote the page text behind its answer; every quote is matched against text the browser actually returned, and a vision model on Vultr Serverless Inference checks the final screenshot. Unbacked claims stamp **MISMATCH**.
+6. **Hand-off**: extracted records become a dataset, profiled in the analyst sandbox, so you can go straight from "collect this from the web" to "chart it".
+
+Page text is treated as untrusted data throughout: the model is told never to follow instructions found on a page, and even if it tried, it could only reach the approved sites and never type a credential.
+
 ## Containment
 
 | Control | How |
@@ -66,6 +88,8 @@ Every run prints a **receipt**: job ID, model, SHA-256 of the exact code, exit c
 | Lifecycle | One container per task, `--rm`, existence checked after every run, job folder deleted |
 | Network perimeter | Runner listens only on the private IP; host firewall allows only the app server's private IP; Vultr Firewall groups on both VMs |
 | Pre-flight guard | Sandbox-side data scan for injected instructions, Nemotron safety check on the question, static code scan, human approval for anything risky |
+| Browser egress | Per-task internal network; allowlist proxy is the only exit; private/metadata IPs refused; 1 GB memory, 256 processes, 90 s per turn |
+| Browser actions | Fixed action vocabulary (no model-written browser code), credential fields refused, submits need approval |
 | Abuse limits | Per-IP hourly rate limit, 10 MB uploads, output size caps |
 
 **Containment moment (shown in the demo video):** load *Poisoned support tickets*. One ticket contains hidden instructions telling the AI to read environment variables and `/etc/passwd` and upload them to an external server. If the model follows them, the upload fails because the sandbox has no network, the run is flagged and stamped BLOCKED, the environment shows zero secrets, and the agent retries with a security note and produces the honest summary.
@@ -85,7 +109,8 @@ Every run prints a **receipt**: job ID, model, SHA-256 of the exact code, exit c
 ```
 Dockerfile    Builds the web app; Coolify deploys from here
 app/          Web app + agent (FastAPI, single-page UI)
-  main.py     API, agent loop, receipts, rate limiting
+  main.py     API, analyst and research agent loops, receipts, rate limiting
+  research.py Browser prompts, action guard, evidence check
   llm.py      Vultr Serverless Inference client with fallback
   prompts.py  Plan / code / fix / explain prompts and the fixed profiling script
   static/     UI
@@ -93,6 +118,8 @@ app/          Web app + agent (FastAPI, single-page UI)
 runner/       Sandbox runner for the executor VM
   app.py              FastAPI runner: gVisor docker run with limits, events, cleanup
   sandbox.Dockerfile  Image the sandbox runs (pandas, matplotlib, ...)
+  browser/            Chromium + Playwright driver that runs inside gVisor
+  egress/             Per-task allowlist proxy (the browser's only exit)
   install-runner.sh   One-command installer (systemd, private-IP bind, token)
   test-runner.py      Containment test suite, run from the app server
 ```
