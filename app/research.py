@@ -112,12 +112,19 @@ def check_actions(actions: list, domains: list[str]) -> dict:
     return {"actions": clean, "refused": refused, "risky": risky}
 
 
+def friendly_error(err: str | None) -> str | None:
+    """Chromium reports a proxy refusal as a tunnel/connection error; say what actually happened."""
+    if err and ("ERR_TUNNEL_CONNECTION_FAILED" in err or "blocked by the egress proxy" in err):
+        return "Blocked by the egress proxy: this site is not on the approved list."
+    return err
+
+
 def observation(result: dict, events: list[dict]) -> str:
     """Compact text the model reads after each browser turn."""
     r = result or {}
     lines = [f"Final URL: {r.get('final_url')}", f"Title: {r.get('title')}"]
     for s in r.get("steps", []):
-        line = f"- step {s.get('i')} {s.get('type')}: {'ok' if s.get('ok') else 'FAILED ' + s.get('error', '')}"
+        line = f"- step {s.get('i')} {s.get('type')}: {'ok' if s.get('ok') else 'FAILED ' + (friendly_error(s.get('error')) or '')}"
         if s.get("texts"):
             items = [t.replace("\n", " ")[:160] for t in s["texts"][:60]]
             line += f"\n  extracted {len(s['texts'])} item(s): " + json.dumps(items, ensure_ascii=False)

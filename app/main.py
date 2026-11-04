@@ -712,7 +712,8 @@ async def research_run(body: Research, request: Request):
             yield {"type": "browse", "turn": turn, "receipt_id": rid if db.ENABLED else None,
                    "result": {k: res[k] for k in ("job_id", "status", "exit_code", "duration_s", "events", "limits")},
                    "final_url": r.get("final_url"), "title": r.get("title"),
-                   "steps": [{**{k: s.get(k) for k in ("i", "type", "ok", "error", "url", "status", "screenshot")},
+                   "steps": [{**{k: s.get(k) for k in ("i", "type", "ok", "url", "status", "screenshot")},
+                              "error": research.friendly_error(s.get("error")),
                               "texts": (s.get("texts") or [])[:15]} for s in r.get("steps", [])],
                    "outputs": public_outputs(res, rid if db.ENABLED else None),
                    "receipt": receipt(actions_text, res, model, pre)}
