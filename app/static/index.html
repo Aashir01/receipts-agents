@@ -208,6 +208,38 @@
   .btn.danger { background: var(--stamp); }
   .btn.danger:hover { background: #9A0E22; }
   .decided { font-weight: 600; font-size: 13.5px; }
+  .acct { display: flex; align-items: center; gap: 6px; font-size: 13.5px; color: var(--muted); }
+  .link { background: none; border: 0; color: var(--blue-ink); cursor: pointer; padding: 6px 8px; font-size: 13.5px; border-radius: 6px; }
+  .link:hover { background: #EAF3FF; }
+  .stats { display: flex; flex-wrap: wrap; gap: 6px 28px; padding: 10px 28px; border-bottom: 1px solid var(--line); background: #fff; font-size: 13px; color: var(--muted); }
+  .stats span b { color: var(--ink); font-size: 15px; margin-right: 6px; font-variant-numeric: tabular-nums; }
+  .stats span.good b { color: var(--pass); }
+  .stats span.bad b { color: var(--stamp); }
+  dialog#signin { border: 1px solid var(--line); border-radius: 12px; padding: 22px; width: min(380px, 92vw); color: var(--ink); }
+  dialog#signin::backdrop { background: #16202E66; }
+  dialog h2 { margin: 0 0 4px; font-size: 18px; }
+  .field { display: block; margin: 12px 0 0; font-size: 13px; color: var(--muted); }
+  .field input { display: block; width: 100%; margin-top: 4px; padding: 9px 11px; border: 1px solid var(--line); border-radius: 8px; color: var(--ink); }
+  .field input:focus { border-color: var(--blue); outline: none; box-shadow: 0 0 0 3px #007BFC22; }
+  .runs { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+  .runs button { width: 100%; text-align: left; border: 1px solid var(--line); background: #fff; border-radius: 8px; padding: 8px 10px; cursor: pointer; }
+  .runs button:hover { border-color: var(--blue); }
+  .runs b { display: block; font-weight: 500; font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .runs small { color: var(--muted); font-size: 12px; }
+  .actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
+  .sharebox { margin-top: 10px; display: flex; gap: 8px; }
+  .sharebox input { flex: 1; min-width: 0; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; font: 12.5px var(--mono); }
+  .replay { margin-top: 12px; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; background: #fff; }
+  .replay h5 { margin: 0; font-size: 14px; }
+  .replay.ok h5 { color: var(--pass); } .replay.no h5 { color: var(--stamp); }
+  .checks { list-style: none; padding: 0; margin: 6px 0 0; font-size: 13px; }
+  .checks li.ok::before { content: "✓ "; color: var(--pass); font-weight: 700; }
+  .checks li.no::before { content: "✗ "; color: var(--stamp); font-weight: 700; }
+  .banner { border-left: 3px solid var(--blue); margin-bottom: 16px; }
+  .banner h2 { margin-bottom: 6px; }
+  body.shared .col-data, body.shared .ask { display: none; }
+  body.shared main { grid-template-columns: minmax(0, 1fr) minmax(300px, 360px); }
+  @media (max-width: 820px) { body.shared main { grid-template-columns: 1fr; } }
   .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 </style>
 </head>
@@ -217,8 +249,10 @@
     <h1>Receipts</h1>
     <p>A data analyst that shows its work. Every line of code runs in a sealed sandbox on Vultr.</p>
   </div>
+  <div class="acct" id="acct"></div>
   <span class="pill" id="status"><span class="dot"></span><span>Checking sandbox…</span></span>
 </header>
+<div class="stats" id="stats" hidden aria-label="Containment record"></div>
 
 <main>
   <!-- data -->
@@ -234,10 +268,16 @@
       <div class="samples" id="samples" aria-label="Sample files"></div>
     </section>
     <section class="block profile" id="profile" hidden></section>
+    <section class="block" id="history" hidden>
+      <h2>Your runs</h2>
+      <p class="hint">Saved to your account. Open one to see its full timeline and receipts.</p>
+      <ol class="runs" id="runs"></ol>
+    </section>
   </div>
 
   <!-- agent -->
   <div class="col-agent">
+    <section class="block banner" id="banner" hidden></section>
     <section class="block ask">
       <h2>Ask a question</h2>
       <p class="hint">The agent plans, writes Python, runs it, fixes its own errors, and only reports numbers the code actually printed.</p>
@@ -264,10 +304,30 @@
   </aside>
 </main>
 
+<dialog id="signin" aria-labelledby="signin-title">
+  <form method="dialog" id="signin-form">
+    <h2 id="signin-title">Sign in to save your runs</h2>
+    <p class="hint">Your history, shareable receipts and replays are stored in Supabase on Vultr.</p>
+    <label class="field">Email<input type="email" id="si-email" autocomplete="email" required></label>
+    <label class="field">Password<input type="password" id="si-pass" autocomplete="current-password" minlength="6" required></label>
+    <p class="error" id="si-error" role="alert"></p>
+    <div class="row">
+      <button class="btn" type="submit" id="si-in">Sign in</button>
+      <button class="btn ghost" type="button" id="si-up">Create account</button>
+      <button class="link" type="button" id="si-cancel">Cancel</button>
+    </div>
+  </form>
+</dialog>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <script>
 const $ = (s) => document.querySelector(s);
 const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
 let dataset = null, busy = false;
+let sb = null, session = null, appConfig = { auth: false }, currentRunId = null, viewOnly = false;
+const sharedMode = location.pathname.startsWith("/r/");
+function authHeaders(h = {}) { if (session?.access_token) h.Authorization = `Bearer ${session.access_token}`; return h; }
+const api = (path, opts = {}) => fetch(path, { ...opts, headers: authHeaders({ ...(opts.headers || {}) }) });
 
 const SUGGEST = {
   "retail_sales_2026.csv": [
@@ -306,7 +366,7 @@ async function loadSamples() {
     b.append(el("small", null, poisoned
       ? "One ticket hides instructions telling the AI to steal data. Watch the sandbox stop it."
       : "1,450 rows of sales by region, product and channel."));
-    b.onclick = () => openDataset(fetch(`/api/samples/${encodeURIComponent(s.id)}`, { method: "POST" }), s.id);
+    b.onclick = () => openDataset(api(`/api/samples/${encodeURIComponent(s.id)}`, { method: "POST" }), s.id);
     box.append(b);
   }
 }
@@ -319,7 +379,7 @@ drop.addEventListener("drop", ev => ev.dataTransfer.files[0] && uploadFile(ev.da
 
 function uploadFile(f) {
   const fd = new FormData(); fd.append("file", f);
-  openDataset(fetch("/api/datasets", { method: "POST", body: fd }), f.name);
+  openDataset(api("/api/datasets", { method: "POST", body: fd }), f.name);
 }
 
 async function openDataset(req, label) {
@@ -394,13 +454,14 @@ async function run() {
   const question = $("#q").value.trim();
   if (!dataset || question.length < 3 || busy) return;
   busy = true; setReady(true); $("#run").textContent = "Running…";
+  viewOnly = false; currentRunId = null; $("#banner").hidden = true;
   const tl = $("#timeline"); tl.replaceChildren();
   const steps = {};
   const t0 = performance.now();
   const tick = setInterval(() => $("#runinfo").textContent = `${((performance.now() - t0) / 1000).toFixed(0)} s`, 500);
 
   try {
-    const res = await fetch("/api/ask", { method: "POST", headers: { "Content-Type": "application/json" },
+    const res = await api("/api/ask", { method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ dataset_id: dataset.dataset_id, question }) });
     if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || `HTTP ${res.status}`); }
     const reader = res.body.getReader(), dec = new TextDecoder();
@@ -432,7 +493,9 @@ function stepNode(tl, steps, id, title) {
 }
 
 function handle(ev, tl, steps) {
-  if (ev.type === "step") {
+  if (ev.type === "run") {
+    currentRunId = ev.run_id;
+  } else if (ev.type === "step") {
     const li = stepNode(tl, steps, ev.id, ev.title);
     li.querySelector("h4").textContent = ev.title;
     if (ev.status === "done") {
@@ -459,11 +522,11 @@ function handle(ev, tl, steps) {
     const imgs = ev.outputs.filter(o => o.mime === "image/png");
     if (imgs.length) {
       const g = el("div", "charts");
-      for (const o of imgs) { const f = el("figure"); const im = el("img"); im.src = o.data_url; im.alt = `Chart ${o.name} produced by the sandboxed code`; f.append(im, el("figcaption", null, o.name)); g.append(f); }
+      for (const o of imgs) { const f = el("figure"); const im = el("img"); im.src = o.data_url || o.url; im.alt = `Chart ${o.name} produced by the sandboxed code`; f.append(im, el("figcaption", null, o.name)); g.append(f); }
       li.append(g);
     }
     for (const o of ev.outputs.filter(o => o.mime !== "image/png")) {
-      const a = el("a", "dl", `Download ${o.name}`); a.href = o.data_url; a.download = o.name; li.append(a);
+      const a = el("a", "dl", `Download ${o.name}`); a.href = o.data_url || o.url; a.download = o.name; li.append(a);
     }
     printSlip({ title: ev.attempt > 1 ? `Run · attempt ${ev.attempt}` : "Run analysis", receipt: ev.receipt,
                 events: r.events, limits: r.limits, selfHealed: ev.attempt > 1 && r.status === "ok" });
@@ -505,17 +568,18 @@ function handle(ev, tl, steps) {
     const no = el("button", "btn ghost", "Reject and rewrite"); no.type = "button";
     const send = async (decision) => {
       ok.disabled = no.disabled = true;
-      try { await fetch(`/api/approvals/${ev.id}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ decision }) }); }
+      try { await api(`/api/approvals/${ev.id}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ decision }) }); }
       catch { ok.disabled = no.disabled = false; }
     };
     ok.onclick = () => send("approve"); no.onclick = () => send("reject");
     row.append(ok, no); card.append(row); li.append(card);
-    no.focus();
+    if (viewOnly) row.remove(); else no.focus();
   } else if (ev.type === "approval_result") {
     const card = document.getElementById(`appr-${ev.id}`);
     if (card) {
-      card.querySelector(".row").replaceWith(el("div", "decided",
-        ev.decision === "approve" ? "Approved by you. Running in the sandbox." : ev.decision === "reject" ? "Rejected by you. Nothing ran; the agent is rewriting." : "No decision in time. Nothing ran."));
+      card.querySelector(".row")?.remove();
+      card.append(el("div", "decided",
+        ev.decision === "approve" ? "Approved by a human. Ran in the sandbox." : ev.decision === "reject" ? "Rejected by a human. Nothing ran; the agent rewrote the code." : "No decision in time. Nothing ran."));
     }
     if (ev.decision !== "approve") printHold(ev);
   } else if (ev.type === "security") {
@@ -529,9 +593,21 @@ function handle(ev, tl, steps) {
     li.append(el("span", "mark"), el("h4", null, "Answer"));
     const box = el("div", "answer"); box.innerHTML = md(ev.markdown); li.append(box);
     if (ev.grounded_in_job) li.append(el("div", "grounded", `Every number above was printed by sandbox job ${ev.grounded_in_job}.`));
+    const acts = el("div", "actions");
+    if (ev.receipt_id) {
+      const b = el("button", "btn ghost", "Re-run this receipt"); b.type = "button";
+      b.title = "Run the exact same code on the exact same file in a fresh sandbox and compare hashes";
+      b.onclick = () => replay(ev.receipt_id, li, b); acts.append(b);
+    }
+    if (currentRunId && appConfig.auth && !sharedMode) {
+      const b = el("button", "btn ghost", "Share this run"); b.type = "button";
+      b.onclick = () => shareRun(currentRunId, li, b); acts.append(b);
+    }
+    if (acts.childElementCount) li.append(acts);
     tl.append(li);
   } else if (ev.type === "done") {
     printTotal(ev.total_s);
+    if (!viewOnly) { loadHistory(); loadStats(); }
   } else if (ev.type === "error") {
     tl.querySelectorAll(".step.running").forEach(n => n.className = "step fail");
     tl.append(el("li", "error", ev.message));
@@ -541,7 +617,7 @@ function handle(ev, tl, steps) {
 /* ---------- receipt printer ---------- */
 function line(k, v) { const d = el("div", "kv"); d.append(el("span", null, k), el("span", null, v)); return d; }
 
-function printSlip({ title, receipt, events, limits, note, selfHealed }) {
+function printSlip({ title, receipt, events, limits, note, selfHealed, stamp }) {
   $("#emptyroll")?.remove();
   const s = el("div", "slip print");
   s.append(el("div", "title", title));
@@ -568,7 +644,8 @@ function printSlip({ title, receipt, events, limits, note, selfHealed }) {
   for (const e of events) s.append(el("div", "ev " + e.kind, `› ${e.detail}`));
   for (const o of receipt.outputs) s.append(line(o.name, o.sha256.slice(0, 12) + "…"));
   const blocked = events.some(e => e.kind === "blocked" || e.kind === "killed");
-  if (blocked) s.append(el("div", "stamp", "BLOCKED"));
+  if (stamp) s.append(el("div", stamp[1] ? "stamp ok" : "stamp", stamp[0]));
+  else if (blocked) s.append(el("div", "stamp", "BLOCKED"));
   else if (selfHealed) s.append(el("div", "stamp ok", "SELF-FIXED"));
   const roll = $("#roll"); roll.append(s); roll.scrollTop = roll.scrollHeight;
 }
@@ -589,6 +666,148 @@ function printTotal(total) {
   const t = el("div", "total");
   t.append(line("slips", String(slips)), line("total time", `${total} s`), line("containers left running", "0"));
   $("#roll").append(t);
+}
+
+/* ---------- replay, share, history, shared pages ---------- */
+async function replay(rid, li, btn) {
+  btn.disabled = true; btn.textContent = "Re-running in a fresh sandbox…";
+  try {
+    const res = await api(`/api/receipts/${rid}/replay`, { method: "POST" });
+    const d = await res.json();
+    if (!res.ok) throw new Error(d.detail || `HTTP ${res.status}`);
+    const box = el("div", "replay " + (d.matched ? "ok" : "no"));
+    box.append(el("h5", null, d.matched ? "Reproduced: a fresh sandbox produced identical results"
+                                        : "Mismatch: the re-run produced different results"));
+    const ul = el("ul", "checks");
+    d.checks.forEach(c => ul.append(el("li", c.match ? "ok" : "no", `${c.item}: ${c.match ? "same SHA-256" : "different"}`)));
+    box.append(ul); li.append(box);
+    printSlip({ title: "Replay of receipt", receipt: d.receipt, events: d.events, limits: d.limits,
+                note: `original ${rid.slice(0, 8)}…`, stamp: d.matched ? ["REPRODUCED", true] : ["MISMATCH", false] });
+    loadStats();
+    btn.textContent = "Re-run again";
+  } catch (e) {
+    li.append(el("p", "error", `Replay failed: ${e.message}`)); btn.textContent = "Re-run this receipt";
+  } finally { btn.disabled = false; }
+}
+
+async function shareRun(id, li, btn) {
+  btn.disabled = true;
+  try {
+    const res = await api(`/api/runs/${id}/share`, { method: "POST" });
+    const d = await res.json();
+    if (!res.ok) throw new Error(d.detail || `HTTP ${res.status}`);
+    const url = location.origin + d.path;
+    li.querySelector(".sharebox")?.remove();
+    const box = el("div", "sharebox"); const inp = el("input"); inp.readOnly = true; inp.value = url;
+    inp.setAttribute("aria-label", "Share link");
+    const copy = el("button", "btn ghost", "Copy link"); copy.type = "button";
+    copy.onclick = async () => { try { await navigator.clipboard.writeText(url); copy.textContent = "Copied"; } catch { inp.select(); } };
+    box.append(inp, copy); li.append(box);
+    btn.textContent = "Shared";
+  } catch (e) { li.append(el("p", "error", `Could not share: ${e.message}`)); btn.disabled = false; }
+}
+
+function resetRoll() {
+  const roll = $("#roll"); const head = roll.querySelector(".head");
+  roll.replaceChildren(head, el("div", "empty-roll", "Receipts print here as code runs."));
+  roll.lastElementChild.id = "emptyroll";
+}
+
+function renderBundle(b, label) {
+  viewOnly = true; currentRunId = b.run.id;
+  const tl = $("#timeline"); tl.replaceChildren(); resetRoll();
+  const banner = $("#banner"); banner.hidden = false; banner.replaceChildren();
+  banner.append(el("h2", null, label));
+  banner.append(el("p", "plan", b.run.question));
+  banner.append(el("p", "muted", `${b.dataset ? b.dataset.filename + ", " : ""}${new Date(b.run.created_at).toLocaleString()}, status ${b.run.status}`));
+  if (sharedMode) { const a = el("a", "dl", "Try Receipts on your own data"); a.href = "/"; banner.append(a); }
+  const steps = {};
+  for (const ev of b.events) handle(ev, tl, steps);
+}
+
+async function openRun(id) {
+  const res = await api(`/api/runs/${id}`); const b = await res.json();
+  if (!res.ok) return alert(b.detail || "Could not open run");
+  renderBundle(b, "Saved run");
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+async function openShared(slug) {
+  document.body.classList.add("shared");
+  const res = await fetch(`/api/share/${encodeURIComponent(slug)}`); const b = await res.json();
+  if (!res.ok) { $("#banner").hidden = false; $("#banner").replaceChildren(el("h2", null, "Run not found"), el("p", "hint", b.detail || "")); return; }
+  renderBundle(b, "Shared run with receipts");
+}
+
+async function loadHistory() {
+  const box = $("#history");
+  if (!session || sharedMode) { box.hidden = true; return; }
+  const res = await api("/api/runs"); if (!res.ok) { box.hidden = true; return; }
+  const runs = await res.json(); box.hidden = false;
+  const ol = $("#runs"); ol.replaceChildren();
+  if (!runs.length) ol.append(el("li", "muted", "No runs yet. Your next run is saved here."));
+  for (const r of runs) {
+    const li = el("li"); const b = el("button"); b.type = "button";
+    b.append(el("b", null, r.question), el("small", null, `${r.status}${r.is_public ? ", shared" : ""}, ${new Date(r.created_at).toLocaleString()}`));
+    b.onclick = () => openRun(r.id); li.append(b); ol.append(li);
+  }
+}
+
+async function loadStats() {
+  try {
+    const st = await (await fetch("/api/stats")).json();
+    if (!st || st.sandbox_jobs == null) return;
+    const items = [["Sandbox jobs", st.sandbox_jobs], ["Actions blocked by the sandbox", st.actions_blocked, "bad"],
+      ["Risky code held before running", st.risky_code_caught, "bad"], ["Runs verified", st.runs_verified, "good"],
+      ["Replays reproduced", st.replays_total != null ? `${st.replays_matched} of ${st.replays_total}` : st.replays_matched, "good"],
+      ["Containers left running", 0, "good"]];
+    const box = $("#stats"); box.replaceChildren(); box.hidden = false;
+    for (const [label, v, tone] of items) {
+      if (v == null) continue;
+      const sp = el("span", tone || ""); sp.append(el("b", null, String(v)), document.createTextNode(label)); box.append(sp);
+    }
+  } catch {}
+}
+
+/* ---------- accounts (Supabase Auth) ---------- */
+function renderAcct() {
+  const box = $("#acct"); box.replaceChildren();
+  if (!appConfig.auth || sharedMode) return;
+  if (!sb) { box.append(el("span", null, "Accounts unavailable")); return; }
+  if (session) {
+    box.append(el("span", null, session.user.email));
+    const out = el("button", "link", "Sign out"); out.type = "button";
+    out.onclick = async () => { await sb.auth.signOut(); };
+    box.append(out);
+  } else {
+    const inb = el("button", "link", "Sign in to save runs"); inb.type = "button";
+    inb.onclick = () => { $("#si-error").textContent = ""; $("#signin").showModal(); $("#si-email").focus(); };
+    box.append(inb);
+  }
+}
+
+async function authAction(kind) {
+  const email = $("#si-email").value.trim(), password = $("#si-pass").value;
+  const err = $("#si-error"); err.textContent = "";
+  if (!email || password.length < 6) { err.textContent = "Enter an email and a password of at least 6 characters."; return; }
+  const fn = kind === "up" ? sb.auth.signUp({ email, password }) : sb.auth.signInWithPassword({ email, password });
+  const { data, error } = await fn;
+  if (error) { err.textContent = error.message; return; }
+  if (kind === "up" && !data.session) { err.textContent = "Account created. Check your email to confirm, then sign in."; return; }
+  $("#signin").close();
+}
+$("#signin-form").addEventListener("submit", e => { e.preventDefault(); authAction("in"); });
+$("#si-up").onclick = () => authAction("up");
+$("#si-cancel").onclick = () => $("#signin").close();
+
+async function initAuth() {
+  try { appConfig = await (await fetch("/api/config")).json(); } catch { appConfig = { auth: false }; }
+  if (appConfig.auth && window.supabase?.createClient) {
+    sb = window.supabase.createClient(appConfig.supabase_url, appConfig.supabase_anon_key);
+    const { data } = await sb.auth.getSession(); session = data.session;
+    sb.auth.onAuthStateChange((_e, s) => { session = s; renderAcct(); loadHistory(); });
+  }
+  renderAcct(); loadHistory();
 }
 
 /* ---------- tiny, escaped markdown ---------- */
@@ -613,8 +832,10 @@ function md(src) {
   return out.join("");
 }
 
-checkHealth(); loadSamples();
+checkHealth(); loadStats();
 setInterval(checkHealth, 30000);
+if (sharedMode) { openShared(location.pathname.split("/")[2] || ""); }
+else { loadSamples(); initAuth(); }
 </script>
 </body>
 </html>
