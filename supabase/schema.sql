@@ -51,7 +51,7 @@ create table if not exists public.receipts (
   id             uuid primary key default gen_random_uuid(),
   run_id         uuid references public.runs(id) on delete cascade,
   dataset_id     uuid references public.datasets(id) on delete set null,
-  kind           text not null check (kind in ('profile', 'analysis', 'verification', 'replay', 'browser')),
+  kind           text not null check (kind in ('profile', 'analysis', 'verification', 'replay', 'browser', 'report')),
   attempt        int,
   job_id         text not null,
   model          text,

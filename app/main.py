@@ -29,6 +29,7 @@ import disposable
 import guard
 import llm
 import prompts
+import report
 import research
 import store
 import verify
@@ -924,6 +925,41 @@ async def run_detail(run_id: str, request: Request):
     if not run["is_public"] and run.get("owner") and (not user or user["id"] != run["owner"]):
         raise HTTPException(403, "This run is private")
     return await _run_bundle(run)
+
+
+@app.post("/api/runs/{run_id}/report")
+async def make_report(run_id: str, request: Request):
+    """F10: build a PDF of a run inside the sandbox with a fixed script; the PDF gets its own receipt."""
+    rate_limit(request)
+    run = await db.one("runs", {"id": f"eq.{run_id}", "select": "*"})
+    if not run:
+        raise HTTPException(404, "Run not found")
+    user = await get_user(request)
+    if not run["is_public"] and run.get("owner") and (not user or user["id"] != run["owner"]):
+        raise HTTPException(403, "This run is private")
+    payload, images = report.build(await _run_bundle(run))
+    files, kept = [], []
+    for img in images:
+        data = await db.download("outputs", f"{img['receipt_id']}/{img['name']}")
+        if data:
+            files.append({"name": img["file"], "content_b64": base64.b64encode(data).decode()})
+            kept.append(img["file"])
+    payload["images"] = [i for i in payload["images"] if i["file"] in kept]
+    files.insert(0, {"name": "report.json", "content_b64": base64.b64encode(report.payload_bytes(payload)).decode()})
+    res = await run_in_sandbox(report.REPORT_CODE, files)
+    pdf = next((o for o in res["outputs"] if o["name"] == "report.pdf"), None)
+    if res["status"] != "ok" or not pdf:
+        tail = "\n".join((res.get("stderr") or "").strip().splitlines()[-3:])
+        raise HTTPException(500, f"The report builder failed in the sandbox: {tail[:300]}")
+    pre = {"question": "n/a", "data_flags": 0, "code_findings": 0, "approval": "not needed (fixed script)"}
+    rid, _ = await store.save_receipt(kind="report", code=report.REPORT_CODE, result=res, model=None,
+                                      run_id=run_id, dataset=None, preflight=pre)
+    saved = bool(await db.one("receipts", {"id": f"eq.{rid}", "select": "id"}))
+    return {"filename": f"receipts-report-{run_id[:8]}.pdf",
+            "data_url": f"data:application/pdf;base64,{pdf['content_b64']}",
+            "url": f"/api/files/{rid}/report.pdf" if saved else None,
+            "receipt": receipt(report.REPORT_CODE, res, None, pre),
+            "result": {k: res[k] for k in ("job_id", "status", "exit_code", "duration_s", "events", "limits")}}
 
 
 @app.post("/api/runs/{run_id}/share")

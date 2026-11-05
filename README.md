@@ -88,6 +88,10 @@ Restoring a Vultr snapshot takes 10 to 60 minutes, so the app keeps a **warm poo
 
 If no standby is ready, the run says so and uses the shared sandbox; it never waits on a snapshot restore. Pool status: `GET /api/vm-pool`.
 
+## PDF report
+
+Any finished run (analysis or web research) can be downloaded as a PDF: question, answer, verification table or evidence quotes, charts or screenshots, containment summary, every sandbox receipt, and the final code. The PDF is laid out **inside the sandbox** by a fixed, human-written script (never model-written) from the run's recorded events and stored files, and gets its own receipt (kind `report`) with its SHA-256.
+
 ## Containment
 
 | Control | How |
@@ -126,6 +130,7 @@ Dockerfile    Builds the web app; Coolify deploys from here
 app/          Web app + agent (FastAPI, single-page UI)
   main.py     API, analyst and research agent loops, receipts, rate limiting
   research.py Browser prompts, action guard, evidence check
+  report.py   Fixed sandbox script that lays out the PDF report
   disposable.py Fresh-VM tier: warm pool, claim, destroy, watchdog (Vultr API)
   llm.py      Vultr Serverless Inference client with fallback
   prompts.py  Plan / code / fix / explain prompts and the fixed profiling script

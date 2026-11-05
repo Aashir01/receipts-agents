@@ -867,6 +867,12 @@ function handle(ev, tl, steps) {
     else if (ev.verified === "mismatch") li.append(el("span", "badge no", web ? "Some claims are not backed by the pages" : "Independent recomputation disagrees"));
     else if (ev.verified === "inconclusive") li.append(el("span", "badge neutral", "Verification inconclusive"));
     const acts = el("div", "actions");
+    if (currentRunId && appConfig.auth !== undefined) {
+      const pb = el("button", "btn ghost", "Download PDF report"); pb.type = "button";
+      pb.title = "Built inside the sandbox by a fixed script, with its own receipt";
+      pb.onclick = () => downloadReport(pb, currentRunId);
+      acts.append(pb);
+    }
     if (ev.receipt_id) {
       const b = el("button", "btn ghost", "Re-run this receipt"); b.type = "button";
       b.title = "Run the exact same code on the exact same file in a fresh sandbox and compare hashes";
@@ -889,6 +895,22 @@ function handle(ev, tl, steps) {
 
 /* ---------- receipt printer ---------- */
 function line(k, v) { const d = el("div", "kv"); d.append(el("span", null, k), el("span", null, v)); return d; }
+
+async function downloadReport(btn, runId) {
+  btn.disabled = true; btn.textContent = "Building PDF in the sandbox…";
+  try {
+    const res = await api(`/api/runs/${runId}/report`, { method: "POST" });
+    const d = await res.json();
+    if (!res.ok) throw new Error(d.detail || `HTTP ${res.status}`);
+    const a = document.createElement("a"); a.href = d.url || d.data_url; a.download = d.filename;
+    document.body.append(a); a.click(); a.remove();
+    printSlip({ title: "PDF report", receipt: d.receipt, events: d.result.events, limits: d.result.limits,
+                stamp: ["PRINTED", true] });
+    btn.textContent = "Download PDF report again";
+  } catch (e) {
+    btn.textContent = `Report failed: ${e.message}`.slice(0, 80);
+  } finally { btn.disabled = false; }
+}
 
 function printVm(ev) {
   $("#emptyroll")?.remove();
