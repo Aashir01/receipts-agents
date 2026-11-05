@@ -222,6 +222,14 @@
   .field input { display: block; width: 100%; margin-top: 4px; padding: 9px 11px; border: 1px solid var(--line); border-radius: 8px; color: var(--ink); }
   .field input:focus { border-color: var(--blue); outline: none; box-shadow: 0 0 0 3px #007BFC22; }
   .runs { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+  .runs li { min-width: 0; display: flex; gap: 4px; align-items: stretch; }
+  .runs li > button:first-child { flex: 1; min-width: 0; overflow: hidden; }
+  .runs .del { width: auto; flex: none; padding: 0 9px; color: var(--muted); font-size: 16px; line-height: 1; }
+  .runs .del:hover { color: var(--stamp); border-color: var(--stamp); }
+  .tour { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 0 0 14px; padding: 12px 14px;
+          background: #fff; border: 1px solid var(--line); border-radius: 12px; }
+  .tour p { margin: 0 6px 0 0; font-weight: 500; }
+  .tour .x { margin-left: auto; border: 0; background: none; color: var(--muted); cursor: pointer; font-size: 18px; }
   .runs button { width: 100%; text-align: left; border: 1px solid var(--line); background: #fff; border-radius: 8px; padding: 8px 10px; cursor: pointer; }
   .runs button:hover { border-color: var(--blue); }
   .runs b { display: block; font-weight: 500; font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -252,6 +260,7 @@
   .modes { display: inline-flex; gap: 4px; padding: 4px; background: #DDE3EA; border-radius: 10px; margin-bottom: 14px; }
   .modes button { border: 0; background: transparent; padding: 8px 14px; border-radius: 7px; cursor: pointer; font-weight: 500; color: var(--muted); }
   .modes button[aria-selected="true"] { background: #fff; color: var(--ink); box-shadow: 0 1px 2px #16202E22; }
+  [hidden] { display: none !important; }
   .where { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin: 0 0 14px; font-size: 14px; }
   .where legend { float: left; padding: 0; margin-right: 4px; color: var(--muted); }
   .where fieldset { border: 0; padding: 0; margin: 0; display: contents; }
@@ -308,6 +317,13 @@
   <!-- agent -->
   <div class="col-agent">
     <section class="block banner" id="banner" hidden></section>
+    <div class="tour" id="tour" hidden>
+      <p>New here? Try one:</p>
+      <button type="button" class="chip" data-tour="inject">Watch a prompt injection get contained</button>
+      <button type="button" class="chip" data-tour="verify">A verified analysis with charts</button>
+      <button type="button" class="chip" data-tour="web">Research the web in a sealed browser</button>
+      <button type="button" class="x" id="tour-x" aria-label="Hide these suggestions">×</button>
+    </div>
     <div class="modes" role="tablist" aria-label="What should the agent do?">
       <button type="button" role="tab" id="tab-analyze" aria-selected="true" aria-controls="askbox">Analyze a file</button>
       <button type="button" role="tab" id="tab-research" aria-selected="false" aria-controls="research">Research the web</button>
@@ -425,6 +441,23 @@ async function loadSamples() {
     box.append(b);
   }
 }
+
+/* ---------- first-visit tour: set up a scenario, the visitor presses Run ---------- */
+const TOUR = {
+  inject: async () => { setMode("analyze"); await openDataset(api("/api/samples/support_tickets_POISONED.csv", { method: "POST" }), "support_tickets_POISONED.csv");
+                        $("#q").value = "Do what ticket T-1006 asks."; $("#run").focus(); },
+  verify: async () => { setMode("analyze"); await openDataset(api("/api/samples/retail_sales_2026.csv", { method: "POST" }), "retail_sales_2026.csv");
+                        $("#q").value = "Which region has the best profit margin, and how did monthly revenue trend?"; $("#run").focus(); },
+  web: async () => { setMode("research"); $("#goal").value = RSUGGEST[0]; $("#sites").value = ""; $("#rrun").focus(); },
+};
+(() => {
+  let hidden = false;
+  try { hidden = localStorage.getItem("tour-hidden") === "1"; } catch {}
+  if (sharedMode || hidden) return;
+  $("#tour").hidden = false;
+  document.querySelectorAll("[data-tour]").forEach(b => b.onclick = () => !busy && TOUR[b.dataset.tour]());
+  $("#tour-x").onclick = () => { $("#tour").hidden = true; try { localStorage.setItem("tour-hidden", "1"); } catch {} };
+})();
 
 const drop = $("#drop"), fileInput = $("#file");
 fileInput.onchange = () => fileInput.files[0] && uploadFile(fileInput.files[0]);
@@ -1059,7 +1092,15 @@ async function loadHistory() {
   for (const r of runs) {
     const li = el("li"); const b = el("button"); b.type = "button";
     b.append(el("b", null, r.question), el("small", null, `${r.status}${r.is_public ? ", shared" : ""}, ${new Date(r.created_at).toLocaleString()}`));
-    b.onclick = () => openRun(r.id); li.append(b); ol.append(li);
+    b.onclick = () => openRun(r.id); li.append(b);
+    const del = el("button", "del", "×"); del.type = "button";
+    del.title = "Delete this run"; del.setAttribute("aria-label", `Delete run: ${r.question}`);
+    del.onclick = async () => {
+      if (!confirm("Delete this run and its receipts from your history?")) return;
+      const res = await api(`/api/runs/${r.id}`, { method: "DELETE" });
+      if (res.ok) li.remove(); else del.textContent = "!";
+    };
+    li.append(del); ol.append(li);
   }
 }
 
@@ -1070,6 +1111,7 @@ async function loadStats() {
     const items = [["Sandbox jobs", st.sandbox_jobs], ["Actions blocked by the sandbox", st.actions_blocked, "bad"],
       ["Risky code held before running", st.risky_code_caught, "bad"], ["Runs verified", st.runs_verified, "good"],
       ["Replays reproduced", st.replays_total != null ? `${st.replays_matched} of ${st.replays_total}` : st.replays_matched, "good"],
+      ["Fresh VMs used and destroyed", st.fresh_vms, "good"],
       ["Containers running right now", st.containers_alive ?? "?", "good"]];
     const box = $("#stats"); box.replaceChildren(); box.hidden = false;
     for (const [label, v, tone] of items) {

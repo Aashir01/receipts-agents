@@ -59,6 +59,19 @@ async def update(table: str, row_id: str, patch: dict) -> bool:
         return False
 
 
+async def delete(table: str, row_id: str) -> bool:
+    if not ENABLED:
+        return False
+    try:
+        r = await _c.delete(f"{URL}/rest/v1/{table}", headers=_headers(), params={"id": f"eq.{row_id}"})
+        if r.status_code >= 300:
+            _log(f"delete {table} -> {r.status_code} {r.text[:200]}")
+        return r.status_code < 300
+    except Exception as e:  # noqa: BLE001
+        _log(f"delete {table} failed: {e}")
+        return False
+
+
 async def select(table: str, params: dict) -> list[dict]:
     """params use PostgREST syntax, e.g. {"id": "eq.<uuid>", "select": "*", "order": "created_at.desc"}."""
     if not ENABLED:

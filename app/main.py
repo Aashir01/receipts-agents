@@ -962,6 +962,20 @@ async def make_report(run_id: str, request: Request):
             "result": {k: res[k] for k in ("job_id", "status", "exit_code", "duration_s", "events", "limits")}}
 
 
+@app.delete("/api/runs/{run_id}")
+async def delete_run(run_id: str, request: Request):
+    """Owner removes a run from history (its events and receipts go with it)."""
+    run = await db.one("runs", {"id": f"eq.{run_id}", "select": "id,owner"})
+    if not run:
+        raise HTTPException(404, "Run not found")
+    user = await get_user(request)
+    if not user or run.get("owner") != user["id"]:
+        raise HTTPException(403, "Only the owner can delete this run")
+    if run_id in ACTIVE:
+        raise HTTPException(409, "Stop the run before deleting it")
+    return {"deleted": await db.delete("runs", run_id)}
+
+
 @app.post("/api/runs/{run_id}/share")
 async def share_run(run_id: str, request: Request):
     run = await db.one("runs", {"id": f"eq.{run_id}", "select": "id,owner,share_slug"})
@@ -1000,6 +1014,8 @@ async def file_out(receipt_id: str, name: str):
 @app.get("/api/stats")
 async def stats():
     row = await db.one("containment_stats", {"select": "*"}) or {}
+    vms = await db.select("receipts", {"executed_on": "like.disposable-vm*", "select": "executed_on", "limit": "5000"})
+    row["fresh_vms"] = len({r["executed_on"] for r in vms}) if db.ENABLED else None
     try:
         r = await _runner.get(f"{RUNNER_URL}/alive", headers={"X-Runner-Token": RUNNER_TOKEN}, timeout=5)
         row["containers_alive"] = r.json().get("containers") if r.status_code == 200 else None
@@ -1053,11 +1069,14 @@ async def replay(receipt_id: str, request: Request):
 app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
 
 
+NO_CACHE = {"Cache-Control": "no-cache"}      # always revalidate, so a redeploy is picked up at once
+
+
 @app.get("/")
 async def index():
-    return FileResponse(HERE / "static" / "index.html")
+    return FileResponse(HERE / "static" / "index.html", headers=NO_CACHE)
 
 
 @app.get("/r/{slug}")
 async def shared_page(slug: str):
-    return FileResponse(HERE / "static" / "index.html")
+    return FileResponse(HERE / "static" / "index.html", headers=NO_CACHE)
