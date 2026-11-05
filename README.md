@@ -1,10 +1,13 @@
-# Receipts
+# Countersign
 
-**An agent that shows its work. It analyses your files and researches the live web, but every line of code it writes and every page its browser opens runs in a sealed sandbox on Vultr, and every result comes with a receipt.**
+**Every answer, signed twice.** An AI agent that analyses your files and works on live websites inside a sealed sandbox on Vultr. A second, independent auditor checks its numbers, every step prints a receipt you can replay, and risky runs can get a brand-new Vultr VM that is destroyed afterwards.
 
 Built for the [Vultr: Agent Rush Hackathon](https://lablab.ai/ai-hackathons/vultr-hackathon) on lablab.ai, Challenge 1: *Blast Radius Zero*.
 
-Live demo: https://agentrush.aashirnoman.dev
+- Website: https://agentrush.aashirnoman.dev
+- Workspace: https://agentrush.aashirnoman.dev/app
+
+(The repository keeps its original name, `receipts-agents`.)
 
 ---
 
@@ -12,7 +15,7 @@ Live demo: https://agentrush.aashirnoman.dev
 
 Ask a chatbot about your spreadsheet and it will happily describe numbers it never computed. Give an agent a code interpreter and you have a new problem: the code is written by a model, the data may contain instructions from strangers, and the code runs somewhere you care about.
 
-Receipts does both halves properly:
+Countersign does both halves properly:
 
 1. **Real work, not descriptions.** The agent writes Python, actually runs it on your file, reads the real output, fixes its own errors, and only reports numbers the code printed.
 2. **Zero blast radius.** That code never touches the web server. It runs in a throwaway gVisor container on a separate Vultr VM with no network, no secrets, hard limits, and is destroyed after every task.
@@ -134,7 +137,7 @@ app/          Web app + agent (FastAPI, single-page UI)
   disposable.py Fresh-VM tier: warm pool, claim, destroy, watchdog (Vultr API)
   llm.py      Vultr Serverless Inference client with fallback
   prompts.py  Plan / code / fix / explain prompts and the fixed profiling script
-  static/     UI
+  static/     Landing page (landing.html) and workspace (index.html)
   samples/    Demo datasets, including the poisoned file
 runner/       Sandbox runner for the executor VM
   app.py              FastAPI runner: gVisor docker run with limits, events, cleanup

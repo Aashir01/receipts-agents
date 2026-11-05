@@ -107,7 +107,7 @@ async def template() -> dict:
 def user_data(token: str, template_ip: str) -> str:
     """Boot script: give this VM its own private address check and its own runner token."""
     return f"""#!/bin/bash
-# Receipts disposable executor: one-time runner token, bind to this VM's own private IP.
+# Countersign disposable executor: one-time runner token, bind to this VM's own private IP.
 TOKEN='{token}'
 TEMPLATE_IP='{template_ip}'
 META=$(curl -s --max-time 5 http://169.254.169.254/v1.json || true)

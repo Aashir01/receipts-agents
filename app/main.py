@@ -1,5 +1,5 @@
 """
-Receipts - a data analyst agent whose every number comes with a receipt.
+Countersign - an AI analyst and web agent whose every answer is checked twice and comes with a receipt.
 
 App server (VM 1): plans, writes code with Vultr Serverless Inference,
 dispatches it to the sandbox runner on the executor VM over the Vultr VPC,
@@ -48,7 +48,7 @@ ALLOWED_EXT = (".csv", ".tsv", ".txt", ".xlsx", ".xls", ".json")
 HERE = Path(__file__).parent
 SAMPLES = HERE / "samples"
 
-app = FastAPI(title="Receipts")
+app = FastAPI(title="Countersign")
 _runner = httpx.AsyncClient(timeout=httpx.Timeout(RUN_TIMEOUT_S + 30, connect=5))
 _hits: dict[str, deque] = defaultdict(deque)
 DATASETS: dict[str, dict] = {}
@@ -955,7 +955,7 @@ async def make_report(run_id: str, request: Request):
     rid, _ = await store.save_receipt(kind="report", code=report.REPORT_CODE, result=res, model=None,
                                       run_id=run_id, dataset=None, preflight=pre)
     saved = bool(await db.one("receipts", {"id": f"eq.{rid}", "select": "id"}))
-    return {"filename": f"receipts-report-{run_id[:8]}.pdf",
+    return {"filename": f"countersign-report-{run_id[:8]}.pdf",
             "data_url": f"data:application/pdf;base64,{pdf['content_b64']}",
             "url": f"/api/files/{rid}/report.pdf" if saved else None,
             "receipt": receipt(report.REPORT_CODE, res, None, pre),
@@ -1073,7 +1073,12 @@ NO_CACHE = {"Cache-Control": "no-cache"}      # always revalidate, so a redeploy
 
 
 @app.get("/")
-async def index():
+async def landing():
+    return FileResponse(HERE / "static" / "landing.html", headers=NO_CACHE)
+
+
+@app.get("/app")
+async def workspace():
     return FileResponse(HERE / "static" / "index.html", headers=NO_CACHE)
 
 

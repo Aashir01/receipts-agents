@@ -22,7 +22,7 @@ from matplotlib.backends.backend_pdf import PdfPages
 
 R = json.load(open("report.json"))
 W, H = 8.27, 11.69                      # A4 portrait, inches
-INK, MUTED, BLUE, RED, GREEN = "#16202E", "#5B6676", "#007BFC", "#C2122B", "#18794E"
+INK, MUTED, BLUE, RED, GREEN = "#101828", "#475467", "#1F3BFF", "#D92D20", "#067647"
 STAMP = {"verified": ("VERIFIED", GREEN), "mismatch": ("MISMATCH", RED), "inconclusive": ("INCONCLUSIVE", MUTED)}
 
 
@@ -35,7 +35,7 @@ class Page:
         if self.fig is not None:
             self.finish()
         self.fig = plt.figure(figsize=(W, H))
-        self.fig.text(0.07, 0.965, "Receipts", fontsize=13, weight="bold", color=INK)
+        self.fig.text(0.07, 0.965, "countersign", fontsize=13, weight="bold", color=INK)
         self.fig.text(0.93, 0.965, f"Run {R['run_id'][:8]}", fontsize=8, color=MUTED, ha="right", family="monospace")
         self.fig.add_artist(plt.Line2D([0.07, 0.93], [0.955, 0.955], color="#D5DBE3", lw=0.8))
         self.y = 0.93
@@ -91,8 +91,8 @@ class Page:
 
 with PdfPages("report.pdf") as pdf:
     d = pdf.infodict()
-    d["Title"] = f"Receipts report {R['run_id'][:8]}"
-    d["Creator"] = "Receipts (sandboxed report builder)"
+    d["Title"] = f"Countersign report {R['run_id'][:8]}"
+    d["Creator"] = "Countersign (sandboxed report builder)"
     p = Page(pdf)
     if R.get("verified") in STAMP:
         label, color = STAMP[R["verified"]]
