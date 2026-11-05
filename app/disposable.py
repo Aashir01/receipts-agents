@@ -45,6 +45,7 @@ ENABLED = bool(KEY)
 
 _c = httpx.AsyncClient(timeout=httpx.Timeout(25, connect=8))
 _template: dict | None = None
+_template_at = 0.0
 _created_at: list[float] = []          # for the hourly cap
 LIVE: dict[str, dict] = {}             # claimed instance id -> {run_id, claimed}
 STATUS: dict = {"ready": 0, "booting": 0, "claimed": 0, "last_error": "", "checked": 0, "fails": 0}
@@ -72,8 +73,8 @@ async def _req(method: str, path: str, **kw) -> httpx.Response:
 
 async def template() -> dict:
     """Region, plan, VPC, firewall group and snapshot, copied from the executor VM."""
-    global _template
-    if _template:
+    global _template, _template_at
+    if _template and time.time() - _template_at < 600:      # look again every 10 minutes: a newer snapshot is picked up
         return _template
     r = await _req("GET", "/instances", params={"label": TEMPLATE_LABEL, "per_page": 50})
     if r.status_code != 200:
@@ -99,6 +100,7 @@ async def template() -> dict:
         if not snaps:
             raise VMError(f"No completed snapshot described '{SNAPSHOT_DESC}'")
         snap = sorted(snaps, key=lambda s: s.get("date_created", ""))[-1]["id"]
+    _template_at = time.time()
     _template = {"region": base["region"], "plan": PLAN or base["plan"], "vpcs": vpcs, "snapshot_id": snap,
                  "firewall_group_id": base.get("firewall_group_id") or "", "template_ip": base.get("internal_ip", "")}
     return _template
