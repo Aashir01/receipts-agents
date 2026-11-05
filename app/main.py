@@ -27,6 +27,7 @@ from pydantic import BaseModel, Field
 import db
 import disposable
 import guard
+import missions
 import llm
 import prompts
 import report
@@ -133,7 +134,28 @@ async def get_dataset(ds_id: str) -> dict | None:
 
 
 def dataset_files(ds: dict) -> list[dict]:
-    return [{"name": ds["filename"], "content_b64": base64.b64encode(ds["path"].read_bytes()).decode()}]
+    """The run's input files: the dataset, plus any extra files of a multi-file analysis."""
+    out = []
+    for d in [ds] + list(ds.get("extra") or []):
+        out.append({"name": d["filename"], "content_b64": base64.b64encode(d["path"].read_bytes()).decode()})
+    return out
+
+
+def combine_datasets(primary: dict, extras: list[dict]) -> dict:
+    """One analysis over several files: same id and hash as the primary file, every file in the sandbox."""
+    if not extras:
+        return primary
+    names = [primary["filename"]] + [e["filename"] for e in extras]
+    if len(set(names)) != len(names):
+        raise HTTPException(400, "Two files have the same name; rename one and upload it again.")
+    work = dict(primary)
+    work["extra"] = extras
+    work["profile"] = {"files": {d["filename"]: d["profile"] for d in [primary] + extras},
+                       "note": "Several files are in the working directory. Load each one by its file name."}
+    work["suspicious"] = list(primary.get("suspicious", [])) + [c for e in extras for c in e.get("suspicious", [])]
+    work["display_name"] = " + ".join(names)
+    work["files_label"] = ", ".join(names)
+    return work
 
 
 def receipt(code: str, result: dict, model: str | None, preflight: dict | None = None) -> dict:
@@ -235,6 +257,8 @@ async def use_sample(sample_id: str, request: Request):
     rate_limit(request)
     path = SAMPLES / Path(sample_id).name
     if not path.is_file():
+        path = SAMPLES / "missions" / Path(sample_id).name
+    if not path.is_file():
         raise HTTPException(404, "Unknown sample")
     user = await get_user(request)
     return await _register(path.name, path.read_bytes(), user["id"] if user else None)
@@ -242,7 +266,8 @@ async def use_sample(sample_id: str, request: Request):
 
 class Ask(BaseModel):
     dataset_id: str
-    question: str = Field(..., min_length=3, max_length=1000)
+    question: str = Field(..., min_length=3, max_length=3000)
+    extra_dataset_ids: list[str] = Field(default_factory=list, max_length=3)
     isolation: str = Field("container", pattern="^(container|vm)$")
 
 
@@ -306,6 +331,7 @@ async def _provision(run_id: str):
                "message": f"No fresh VM is ready yet: {reason}. Restoring the executor snapshot on Vultr "
                           "takes 10 to 60 minutes and happens in the background. This run uses the shared sandbox."}
         return
+    vm["owner"] = run_id
     run["vm"] = vm
     yield {"type": "step", "id": "vm", "status": "done", "title": f"Fresh VM {vm['label']} assigned to this run only"}
     yield {"type": "vm", "status": "ready", "instance_id": vm["id"], "label": vm["label"], "ip": vm["ip"],
@@ -320,7 +346,7 @@ async def _with_teardown(run_id: str, agen):
 
     def live():
         vm = run.get("vm")
-        return vm if vm and not vm.get("destroyed") else None
+        return vm if vm and not vm.get("destroyed") and vm.get("owner") == run_id else None
 
     try:
         async for item in agen:
@@ -354,6 +380,13 @@ async def ask(body: Ask, request: Request):
     ds = await get_dataset(body.dataset_id)
     if not ds:
         raise HTTPException(404, "Dataset not found. Upload it again.")
+    extras = []
+    for xid in body.extra_dataset_ids:
+        x = await get_dataset(xid)
+        if not x:
+            raise HTTPException(404, "One of the extra files was not found. Upload it again.")
+        extras.append(x)
+    ds = combine_datasets(ds, extras)
     rec = store.RunRecorder(user["id"] if user else None, ds, body.question)
     await rec.start()
 
@@ -379,7 +412,7 @@ async def ask(body: Ask, request: Request):
         """Yields event dicts (recorded + streamed) or raw keep-alive strings (streamed only)."""
         started = time.monotonic()
         data_flags = ds.get("suspicious", [])
-        yield {"type": "run", "run_id": rec.id, "question": body.question, "dataset": ds["filename"]}
+        yield {"type": "run", "run_id": rec.id, "question": body.question, "dataset": ds.get("display_name", ds["filename"])}
 
         # 0. Pre-flight: question and data, before any model writes code
         yield {"type": "step", "id": "guard-q", "status": "running", "title": "Pre-flight: checking your question"}
@@ -396,7 +429,7 @@ async def ask(body: Ask, request: Request):
 
         # 1. Plan
         yield {"type": "step", "id": "plan", "status": "running", "title": "Planning"}
-        plan = await llm.chat(prompts.plan_messages(body.question, ds["filename"], ds["profile"]), max_tokens=3000)
+        plan = await llm.chat(prompts.plan_messages(body.question, ds.get("files_label", ds["filename"]), ds["profile"]), max_tokens=3000)
         yield {"type": "step", "id": "plan", "status": "done", "title": "Plan",
                "content": plan["text"], "model": plan["model"], "latency_s": plan["latency_s"]}
         check_stop()
@@ -404,7 +437,7 @@ async def ask(body: Ask, request: Request):
         # 2. Explore: a short sandboxed look at the data before the real analysis
         yield {"type": "stage", "stage": "explore", "title": "Stage 1 of 3: explore the data"}
         findings_text = ""
-        exp = await llm.chat(prompts.explore_messages(body.question, ds["filename"], ds["profile"],
+        exp = await llm.chat(prompts.explore_messages(body.question, ds.get("files_label", ds["filename"]), ds["profile"],
                                                       RUN_TIMEOUT_S, RUN_MEMORY_MB), max_tokens=4000)
         exp_code = llm.extract_code(exp["text"])
         exp_scan = [f for f in guard.scan_code(exp_code) if f["severity"] == "block"]
@@ -429,7 +462,7 @@ async def ask(body: Ask, request: Request):
 
         # 3. Analyze: code -> pre-flight scan -> (approval) -> run -> self-heal
         yield {"type": "stage", "stage": "analyze", "title": "Stage 2 of 3: analyze"}
-        messages = prompts.code_messages(body.question, ds["filename"], ds["profile"], plan["text"],
+        messages = prompts.code_messages(body.question, ds.get("files_label", ds["filename"]), ds["profile"], plan["text"],
                                          RUN_TIMEOUT_S, RUN_MEMORY_MB)
         messages[0]["content"] += guard.summarise_data_flags(data_flags)
         if findings_text:
@@ -514,7 +547,7 @@ async def ask(body: Ask, request: Request):
             if quantities:
                 yield {"type": "step", "id": "verify", "status": "running",
                        "title": f"A second auditor is recomputing {len(quantities)} number{'s' if len(quantities) > 1 else ''} from scratch"}
-                vmsgs = prompts.verify_messages(body.question, ds["filename"], ds["profile"], quantities,
+                vmsgs = prompts.verify_messages(body.question, ds.get("files_label", ds["filename"]), ds["profile"], quantities,
                                                 RUN_TIMEOUT_S, RUN_MEMORY_MB)
                 for vtry in (1, 2):
                     vrep = await llm.chat(vmsgs, max_tokens=6000)
@@ -857,6 +890,172 @@ async def research_run(body: Research, request: Request):
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
+# ---------- Missions: a lead agent runs a team of specialists ----------
+
+class MissionReq(BaseModel):
+    mission: str = Field(..., pattern="^[a-z_]{3,30}$")
+    goal: str | None = Field(None, max_length=1500)
+    dataset_ids: list[str] = Field(default_factory=list, max_length=3)
+    domains: list[str] = Field(default_factory=list, max_length=5)
+    isolation: str = Field("container", pattern="^(container|vm)$")
+
+
+@app.get("/api/missions")
+async def mission_list():
+    return missions.public_templates()
+
+
+async def _forward(mission_id: str, step: int, agent: str, resp, sink: dict):
+    """Relay a specialist's live stream into the mission stream, and note what it produced."""
+    buf = ""
+    async for chunk in resp.body_iterator:
+        if isinstance(chunk, bytes):
+            chunk = chunk.decode()
+        if chunk.startswith(":"):
+            yield chunk
+            continue
+        buf += chunk
+        while "\n\n" in buf:
+            part, buf = buf.split("\n\n", 1)
+            if not part.startswith("data: "):
+                continue
+            ev = json.loads(part[6:])
+            t = ev.get("type")
+            if t == "run":
+                sink["run_id"] = ev["run_id"]
+                ACTIVE[mission_id]["child"] = ev["run_id"]
+                vm = ACTIVE[mission_id].get("vm")
+                if vm and ev["run_id"] in ACTIVE:          # specialists share the mission's fresh VM
+                    ACTIVE[ev["run_id"]]["vm"] = vm
+            elif t == "answer":
+                sink["answer"] = ev.get("markdown") or ""
+            elif t == "verify":
+                sink["verified"] = ev.get("status")
+            elif t == "web_verify":
+                sink["verified"] = ev.get("status")
+            elif t == "records" and ev.get("dataset"):
+                sink["dataset"] = ev["dataset"]
+            elif t == "done":
+                sink["status"] = ev.get("status") or "failed"
+                sink["verified"] = ev.get("verified") or sink.get("verified")
+            elif t == "error":
+                sink["error"] = ev.get("message")
+            yield {"type": "agent_event", "step": step, "agent": agent, "event": ev}
+    ACTIVE[mission_id]["child"] = None
+
+
+@app.post("/api/missions/run")
+async def mission_run(body: MissionReq, request: Request):
+    rate_limit(request)
+    t = missions.TEMPLATES.get(body.mission)
+    if not t:
+        raise HTTPException(404, "Unknown mission")
+    user = await get_user(request)
+    if body.isolation == "vm" and not user:
+        raise HTTPException(401, "Sign in to run on a fresh VM (each one is a real, billed Vultr server).")
+    if len(body.dataset_ids) != len(t["files"]):
+        raise HTTPException(400, f"This mission needs {len(t['files'])} file(s): " + ", ".join(f["label"] for f in t["files"]))
+    files = []
+    for fid in body.dataset_ids:
+        d = await get_dataset(fid)
+        if not d:
+            raise HTTPException(404, "A mission file was not found. Load it again.")
+        files.append(d)
+    domains = research.clean_domains(body.domains or t["sites"])
+    if any(a == "researcher" for a, _ in t["steps"]) and not domains:
+        raise HTTPException(400, "Name the website(s) the researcher may visit.")
+    goal = (body.goal or t["goal"]).strip()
+    owner = user["id"] if user else None
+    rec = store.RunRecorder(owner, files[0] if files else None, f"Mission: {t['title']}. {goal}")
+    await rec.start()
+    ACTIVE[rec.id] = {"stop": False, "job": None, "vm": None, "child": None}
+
+    def check_stop():
+        if ACTIVE.get(rec.id, {}).get("stop"):
+            raise Stopped()
+
+    async def agent():
+        started = time.monotonic()
+        yield {"type": "run", "run_id": rec.id, "question": goal, "mode": "mission", "mission": body.mission,
+               "title": t["title"]}
+        yield {"type": "step", "id": "guard-q", "status": "running", "title": "Pre-flight: checking the mission goal"}
+        q_flags = guard.question_heuristics(goal)
+        safety = await llm.safety_check(goal)
+        q_safety = {k: safety[k] for k in ("status", "categories", "model", "latency_s")}
+        yield {"type": "preflight", "stage": "question", "risky": bool(q_flags) or safety["status"] == "unsafe",
+               "flags": q_flags, "safety": q_safety}
+        if body.isolation == "vm":
+            async for item in _provision(rec.id):
+                yield item
+
+        # 1. the lead agent plans
+        inputs = {f["role"]: d["filename"] for f, d in zip(t["files"], files)}
+        inputs.update({"sites": ", ".join(domains), "web": "the file the researcher produces"})
+        yield {"type": "step", "id": "lead", "status": "running", "title": "Lead agent is planning the mission"}
+        lead = await llm.chat(missions.lead_messages(body.mission, goal, inputs), max_tokens=5000)
+        plan, brief, from_model = missions.accept_plan(body.mission, research.parse_json(lead["text"]), inputs)
+        yield {"type": "step", "id": "lead", "status": "done", "title": f"Lead agent planned {len(plan)} steps",
+               "model": lead["model"], "latency_s": lead["latency_s"]}
+        yield {"type": "mission_plan", "title": t["title"], "for": t["for"], "brief": brief, "from_model": from_model,
+               "steps": [{"step": i, "agent": st["agent"], "task": st["task"]} for i, st in enumerate(plan, 1)]}
+
+        # 2. specialists, one sealed run each
+        reports, web_ds = [], None
+        for i, st in enumerate(plan, 1):
+            if st["agent"] == "reporter":
+                continue
+            check_stop()
+            task = st["task"]
+            sink = {"status": "failed", "answer": "", "verified": None}
+            if st["agent"] == "analyst" and web_ds:
+                task += f"\nThe researcher's records are in the file {web_ds['filename']}."
+            yield {"type": "agent_start", "step": i, "agent": st["agent"], "task": task}
+            try:
+                if st["agent"] == "researcher":
+                    resp = await research_run(Research(goal=task[:1500], domains=domains), request)
+                else:
+                    extra = [d["id"] for d in files[1:]] + ([web_ds["dataset_id"]] if web_ds else [])
+                    resp = await ask(Ask(dataset_id=files[0]["id"], question=task[:3000], extra_dataset_ids=extra), request)
+                async for item in _forward(rec.id, i, st["agent"], resp, sink):
+                    yield item
+            except HTTPException as e:
+                sink["error"] = str(e.detail)
+            check_stop()
+            if sink["status"] == "stopped":
+                raise Stopped()
+            if st["agent"] == "researcher":
+                web_ds = sink.get("dataset")
+            reports.append({"step": i, "agent": st["agent"], "task": task, "status": sink["status"],
+                            "answer": sink.get("answer") or sink.get("error") or "", "verified": sink.get("verified")})
+            yield {"type": "agent_done", "step": i, "agent": st["agent"], "status": sink["status"],
+                   "verified": sink.get("verified"), "child_run": sink.get("run_id"), "error": sink.get("error")}
+            if st["agent"] == "researcher" and not web_ds:
+                reports.append({"step": i, "agent": "lead", "task": "check hand-off", "status": "failed",
+                                "answer": "The researcher returned no records, so the analysis could not compare prices.",
+                                "verified": None})
+                break
+
+        # 3. the reporter writes the brief from what the specialists actually reported
+        check_stop()
+        rstep = len(plan)
+        yield {"type": "agent_start", "step": rstep, "agent": "reporter", "task": plan[-1]["task"]}
+        rep = await llm.chat(missions.reporter_messages(body.mission, goal, reports), max_tokens=5000)
+        statuses = [r["verified"] for r in reports if r.get("verified")]
+        overall = ("mismatch" if "mismatch" in statuses else "verified" if "verified" in statuses
+                   else "inconclusive" if statuses else None)
+        yield {"type": "agent_done", "step": rstep, "agent": "reporter", "status": "done", "verified": None,
+               "model": rep["model"], "latency_s": rep["latency_s"]}
+        ok = all(r["status"] == "done" for r in reports)
+        yield {"type": "answer", "markdown": rep["text"], "model": rep["model"], "grounded_in_job": None,
+               "receipt_id": None, "verified": overall, "mission": True,
+               "specialists": [{k: r[k] for k in ("step", "agent", "status", "verified")} for r in reports]}
+        yield {"type": "done", "total_s": round(time.monotonic() - started, 2), "status": "done" if ok else "failed",
+               "run_id": rec.id, "saved": db.ENABLED, "verified": overall}
+
+    return StreamingResponse(_recorded_stream(rec, _with_teardown(rec.id, agent())), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
 @app.post("/api/runs/{run_id}/stop")
 async def stop_run(run_id: str):
     """Stop button: halt the agent and kill its running sandbox container right away."""
@@ -864,6 +1063,8 @@ async def stop_run(run_id: str):
     if not run:
         raise HTTPException(404, "That run is not active")
     run["stop"] = True
+    if run.get("child") and run["child"] in ACTIVE:          # a mission stops the agent that is working
+        await stop_run(run["child"])
     for a in APPROVALS.values():
         if a.get("run_id") == run_id and not a["event"].is_set():
             a["decision"] = "stopped"

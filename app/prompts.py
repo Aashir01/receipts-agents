@@ -53,6 +53,8 @@ Mention charts by file name if they were produced. No code."""
 
 
 def loader_hint(filename: str) -> str:
+    if ", " in filename:                       # several files: one loader per file
+        return " and ".join(loader_hint(f) for f in filename.split(", "))
     low = filename.lower()
     if low.endswith((".xlsx", ".xls")):
         return f"pd.read_excel({filename!r})"

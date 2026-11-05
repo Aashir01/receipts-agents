@@ -56,6 +56,26 @@ A **Stop** button halts the agent at any point and kills the running sandbox con
 
 Every run prints a **receipt**: job ID, model, SHA-256 of the exact code, exit code, duration, runtime, limits, containment events, and SHA-256 of every output file.
 
+## Missions: a lead agent runs a team
+
+Give Countersign a business job instead of a prompt. A **lead agent** reads the mission and its inputs and writes a concrete task for each specialist; guardrails keep it to the team and order the mission allows. Each specialist step is an ordinary sealed run with its own receipts, streamed live into one timeline:
+
+| Agent | What it does |
+| --- | --- |
+| Lead agent | Plans the mission and briefs each specialist |
+| Researcher | The sandboxed browser agent: approved sites only, quotes its evidence |
+| Analyst | Writes and runs Python on the mission's files (several at once), fixes its own errors; an independent auditor recomputes its numbers |
+| Reporter | Writes the executive brief using only numbers the sealed runs printed |
+
+Ready-made missions, each with realistic sample data:
+
+- **Competitor price check** (e-commerce): the researcher collects competitor prices from approved sites, the analyst compares them with your price list, the reporter recommends repricing.
+- **Invoice reconciliation** (finance): matches invoices to payments and flags unpaid, part-paid, overpaid, duplicated and unmatched payments (the sample hides a letter-O typo, a duplicate, an overpayment and an unknown reference).
+- **Monthly business report** (management): KPIs, month-over-month growth, regions, channels, top movers, all recomputed.
+- **Messy data clean-up** (operations): a consistent file plus a change log of every fix.
+
+With **Run on: a fresh Vultr VM**, the whole team shares one never-used VM that is destroyed when the mission ends. Every mission can be downloaded as a PDF brief with the team's steps and every receipt.
+
 ## Research the web (sandboxed browser agent)
 
 The second mode gives the agent a real Chromium browser, still with zero blast radius:
@@ -132,13 +152,14 @@ Any finished run (analysis or web research) can be downloaded as a PDF: question
 Dockerfile    Builds the web app; Coolify deploys from here
 app/          Web app + agent (FastAPI, single-page UI)
   main.py     API, analyst and research agent loops, receipts, rate limiting
+  missions.py Mission templates, lead agent planning and guardrails, reporter
   research.py Browser prompts, action guard, evidence check
   report.py   Fixed sandbox script that lays out the PDF report
   disposable.py Fresh-VM tier: warm pool, claim, destroy, watchdog (Vultr API)
   llm.py      Vultr Serverless Inference client with fallback
   prompts.py  Plan / code / fix / explain prompts and the fixed profiling script
   static/     Landing page (landing.html) and workspace (index.html)
-  samples/    Demo datasets, including the poisoned file
+  samples/    Demo datasets, including the poisoned file and the mission samples
 runner/       Sandbox runner for the executor VM
   app.py              FastAPI runner: gVisor docker run with limits, events, cleanup
   sandbox.Dockerfile  Image the sandbox runs (pandas, matplotlib, ...)

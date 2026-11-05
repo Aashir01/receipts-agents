@@ -102,8 +102,17 @@ with PdfPages("report.pdf") as pdf:
     p.text(R["question"], size=15, weight="bold", width=58, gap=0.01)
     p.kv(R["meta"])
 
-    p.heading("Answer")
+    p.heading("Executive brief" if R.get("team") else "Answer")
     p.text(R["answer"] or "No answer was produced.", size=10.5, width=88)
+    if R.get("team"):
+        p.heading("The team")
+        if R.get("brief"):
+            p.text("Lead agent: " + R["brief"], size=9, color=MUTED)
+        for i, m in enumerate(R["team"], 1):
+            mark = {"done": GREEN, "failed": RED, "stopped": RED}.get(m["status"], MUTED)
+            p.text(f"{i}. {m['agent']}: {m['status']}" + (f", auditor {m['verified']}" if m["verified"] else ""),
+                   size=9.5, weight="bold", color=mark)
+            p.text(m["task"], size=8.5, color=MUTED, width=105)
     if R.get("grounded"):
         p.text(R["grounded"], size=8, color=GREEN)
 
@@ -152,8 +161,27 @@ def _plain(md: str) -> str:
 def build(bundle: dict) -> tuple[dict, list[dict]]:
     """Turn a stored run into report.json content plus the images to fetch from Storage.
     Returns (payload, [{"receipt_id", "name", "file"}])."""
-    run, ds, events = bundle["run"], bundle.get("dataset"), bundle["events"]
-    research = any(e.get("type") == "run" and e.get("mode") == "research" for e in events)
+    run, ds, raw = bundle["run"], bundle.get("dataset"), bundle["events"]
+    first = next((e for e in raw if e.get("type") == "run"), {})
+    mission = first.get("mode") == "mission"
+    research = first.get("mode") == "research"
+    # a mission's specialists stream nested events: flatten them, keeping the mission's own events
+    events = []
+    for e in raw:
+        if e.get("type") == "agent_event":
+            inner = e.get("event") or {}
+            if inner.get("type") not in ("run", "done", "answer"):
+                events.append(inner)
+        else:
+            events.append(e)
+    team = []
+    plan = next((e for e in raw if e.get("type") == "mission_plan"), None)
+    if plan:
+        done = {e["step"]: e for e in raw if e.get("type") == "agent_done"}
+        for st in plan.get("steps", []):
+            d = done.get(st["step"], {})
+            team.append({"agent": st["agent"].title(), "task": st["task"][:500],
+                         "status": d.get("status", "not run"), "verified": d.get("verified") or ""})
     answer = next((e for e in reversed(events) if e.get("type") == "answer"), {})
     verify_ev = next((e for e in reversed(events) if e.get("type") == "verify"), None)
     web = next((e for e in reversed(events) if e.get("type") == "web_verify"), None)
@@ -220,7 +248,9 @@ def build(bundle: dict) -> tuple[dict, list[dict]]:
 
     payload = {
         "run_id": run["id"], "question": run.get("question") or "",
-        "mode_label": "Web research report" if research else "Data analysis report",
+        "mode_label": (f"Mission report: {first.get('title', '')}" if mission else
+                       "Web research report" if research else "Data analysis report"),
+        "team": team, "brief": (plan or {}).get("brief", ""),
         "verified": (verify_ev or {}).get("status") or (web or {}).get("status") or run.get("verified"),
         "meta": meta, "answer": _plain(answer.get("markdown", "")),
         "grounded": (f"Every number above was printed by sandbox job {answer['grounded_in_job']}."
@@ -233,7 +263,7 @@ def build(bundle: dict) -> tuple[dict, list[dict]]:
         "evidence": ((web or {}).get("evidence") or {}).get("checks") or [],
         "images": [{k: i[k] for k in ("file", "title", "caption")} for i in images],
         "containment": containment, "events": contained[:12], "receipts": receipts[:10],
-        "code": (code_ev or {}).get("code", "")[:6000] if not research else "",
+        "code": (code_ev or {}).get("code", "")[:6000] if not research and not mission else "",
     }
     return payload, images
 

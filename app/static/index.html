@@ -295,6 +295,42 @@
   .rows th, .rows td { border-bottom: 1px solid var(--line); padding: 4px 8px; text-align: left; white-space: nowrap; max-width: 260px; overflow: hidden; text-overflow: ellipsis; }
   .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 
+  /* ---------- missions ---------- */
+  .mgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; margin-top: 6px; }
+  .mcard { text-align: left; cursor: pointer; background: var(--surface); border: 1.5px solid var(--line); padding: 16px; display: flex; flex-direction: column; gap: 6px; color: var(--ink); }
+  .mcard:hover { border-color: var(--ink); }
+  .mcard[aria-pressed="true"] { border-color: var(--blue); box-shadow: inset 0 0 0 1.5px var(--blue); }
+  .mcard b { font: 700 17px/1.2 var(--display); }
+  .mcard .for { font-size: 12.5px; color: var(--muted); }
+  .mcard p { margin: 0; font-size: 13.5px; color: var(--muted); }
+  .team { display: flex; flex-wrap: wrap; gap: 4px; margin-top: auto; padding-top: 6px; }
+  .who { display: inline-flex; align-items: center; gap: 5px; font: 700 11.5px/1 var(--mono); padding: 4px 6px; border: 1.5px solid currentColor; }
+  .who.lead { color: var(--ink); } .who.researcher { color: var(--blue-ink); } .who.analyst { color: var(--pass); } .who.reporter { color: var(--warn); }
+  .mform { margin-top: 18px; border-top: 1.5px solid var(--ink); padding-top: 16px; }
+  .mform h3 { margin: 0 0 4px; font: 700 20px var(--display); }
+  .mfile { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 10px 0; border-bottom: 1px dashed var(--line); }
+  .mfile .lab { flex: 1 1 200px; min-width: 0; }
+  .mfile .lab b { display: block; font-size: 14px; }
+  .mfile .lab small { color: var(--muted); font-size: 12.5px; }
+  .mfile .got { font-size: 13px; color: var(--pass); font-weight: 600; word-break: break-all; }
+  .mfile label.btn { display: inline-block; }
+  .mfile input[type=file] { position: absolute; width: 1px; height: 1px; opacity: 0; }
+  #mgoal { width: 100%; min-height: 64px; margin-top: 4px; padding: 10px 12px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); font: inherit; resize: vertical; }
+  .agent { list-style: none; margin: 0 0 18px; border: 1.5px solid var(--ink); background: var(--surface); }
+  .agent > header { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 12px 14px; border-bottom: 1px dashed var(--line); }
+  .agent > header h4 { margin: 0; font: 700 17px var(--display); }
+  .agent > header .role { color: var(--muted); font-size: 13px; flex: 1 1 200px; }
+  .agent .state { font: 700 12px/1 var(--mono); padding: 4px 8px; border: 1.5px solid var(--line); color: var(--muted); }
+  .agent .state.working { border-color: var(--blue); color: var(--blue-ink); }
+  .agent .state.done { border-color: var(--pass); color: var(--pass); }
+  .agent .state.failed { border-color: var(--stamp); color: var(--stamp); }
+  .agent .task { margin: 0; padding: 10px 14px 0; font-size: 13.5px; color: var(--muted); }
+  .agent .subtl { padding: 12px 14px 2px; }
+  .agent .subtl > .step:last-child { padding-bottom: 8px; }
+  .planlist { margin: 8px 0 0; padding: 0; list-style: none; display: grid; gap: 6px; }
+  .planlist li { display: flex; gap: 10px; align-items: baseline; font-size: 13.5px; }
+  .planlist li span:last-child { color: var(--muted); }
+
   /* ---------- Countersign theme layer ---------- */
   .drop, .sample, .chip, .btn, .ask textarea, .col, .step pre, .answer pre, .charts figure, .approval,
   .runs button, .replay, .sharebox input, .field input, .shots figure, .scan, .tour, .modes, .modes button,
@@ -420,12 +456,14 @@
     <section class="block banner" id="banner" hidden></section>
     <div class="tour" id="tour" hidden>
       <p>New here? Try one:</p>
+      <button type="button" class="chip" data-tour="missions">Run a business mission with an agent team</button>
       <button type="button" class="chip" data-tour="inject">Watch a prompt injection get contained</button>
       <button type="button" class="chip" data-tour="verify">A verified analysis with charts</button>
       <button type="button" class="chip" data-tour="web">Research the web in a sealed browser</button>
       <button type="button" class="x" id="tour-x" aria-label="Hide these suggestions">×</button>
     </div>
     <div class="modes" role="tablist" aria-label="What should the agent do?">
+      <button type="button" role="tab" id="tab-missions" aria-selected="false" aria-controls="missionbox">Missions</button>
       <button type="button" role="tab" id="tab-analyze" aria-selected="true" aria-controls="askbox">Analyze a file</button>
       <button type="button" role="tab" id="tab-research" aria-selected="false" aria-controls="research">Research the web</button>
     </div>
@@ -436,6 +474,24 @@
         <label><input type="radio" name="iso" value="vm"> A fresh Vultr VM <small id="vmstate">used once, destroyed after the run</small></label>
       </fieldset>
     </div>
+    <section class="block ask" id="missionbox" hidden>
+      <h2>Missions</h2>
+      <p class="hint">Pick a business job. A lead agent plans it and hands each step to a specialist: the researcher, the analyst with its independent auditor, and the reporter. Every step runs sealed and prints receipts.</p>
+      <div class="mgrid" id="mgrid"></div>
+      <div class="mform" id="mform" hidden>
+        <h3 id="mtitle"></h3>
+        <p class="hint" id="mpitch"></p>
+        <div id="mfiles"></div>
+        <label class="field" id="msites-wrap">Sites the researcher may visit (comma separated)<input id="msites"></label>
+        <label class="field" for="mgoal">Goal for the lead agent</label>
+        <textarea id="mgoal"></textarea>
+        <div class="row" style="margin-top: 12px">
+          <button class="btn" id="mrun" type="button" disabled>Run mission</button>
+          <button class="btn ghost" id="mstop" type="button" hidden>Stop</button>
+          <span class="muted" id="minfo"></span>
+        </div>
+      </div>
+    </section>
     <section class="block ask" id="research" hidden>
       <h2>Research the web</h2>
       <p class="hint">A real browser runs in a sealed sandbox that can reach only the sites you approve. Anything that submits, buys or sends waits for your OK.</p>
@@ -543,12 +599,20 @@ async function loadSamples() {
   }
 }
 
+loadMissions();
 /* ---------- first-visit tour: set up a scenario, the visitor presses Run ---------- */
 const TOUR = {
   inject: async () => { setMode("analyze"); await openDataset(api("/api/samples/support_tickets_POISONED.csv", { method: "POST" }), "support_tickets_POISONED.csv");
                         $("#q").value = "Do what ticket T-1006 asks."; $("#run").focus(); },
   verify: async () => { setMode("analyze"); await openDataset(api("/api/samples/retail_sales_2026.csv", { method: "POST" }), "retail_sales_2026.csv");
                         $("#q").value = "Which region has the best profit margin, and how did monthly revenue trend?"; $("#run").focus(); },
+  missions: async (which) => {
+    setMode("missions");
+    for (let i = 0; i < 40 && !MISSIONS.length; i++) await new Promise(r => setTimeout(r, 100));
+    const m = MISSIONS.find(x => x.id === which) || MISSIONS.find(x => x.id === "reconcile");
+    const card = [...document.querySelectorAll(".mcard")][MISSIONS.indexOf(m)];
+    if (m && card) { pickMission(m, card); card.scrollIntoView({ block: "center" }); }
+  },
   web: async () => { setMode("research"); $("#goal").value = RSUGGEST[0]; $("#sites").value = ""; $("#rrun").focus(); },
 };
 (() => {
@@ -562,7 +626,7 @@ const TOUR = {
 (() => {
   const q = new URLSearchParams(location.search);
   const t = q.get("tour");
-  if (t && TOUR[t]) setTimeout(() => TOUR[t](), 50);
+  if (t && TOUR[t]) setTimeout(() => TOUR[t](q.get("m")), 50);
   if (q.has("signin")) setTimeout(() => { if (!session) $("#signin").showModal(); }, 800);
   if (t || q.has("signin")) history.replaceState(null, "", location.pathname);
 })();
@@ -706,11 +770,11 @@ const RSUGGEST = [
   "Fill in the pizza order form at httpbin.org/forms/post for customer Aashir, size medium, toppings bacon and mushroom, and submit it.",
 ];
 function setMode(mode) {
-  const research = mode === "research";
-  $("#tab-analyze").setAttribute("aria-selected", String(!research));
-  $("#tab-research").setAttribute("aria-selected", String(research));
-  $("#askbox").hidden = research; $("#research").hidden = !research;
+  for (const [m, tab, box] of [["missions", "#tab-missions", "#missionbox"], ["analyze", "#tab-analyze", "#askbox"], ["research", "#tab-research", "#research"]]) {
+    $(tab).setAttribute("aria-selected", String(m === mode)); $(box).hidden = m !== mode;
+  }
 }
+$("#tab-missions").onclick = () => setMode("missions");
 $("#tab-analyze").onclick = () => setMode("analyze");
 $("#tab-research").onclick = () => setMode("research");
 for (const g of RSUGGEST) {
@@ -741,6 +805,88 @@ $("#rrun").onclick = async () => {
     stopBtn.hidden = true; setReady(!!dataset);
   }
 };
+
+/* ---------- missions ---------- */
+const AGENT_INFO = {
+  lead: ["Lead agent", "Plans the mission and briefs each specialist"],
+  researcher: ["Researcher", "Sealed browser, approved sites only, must quote its evidence"],
+  analyst: ["Analyst", "Writes and runs Python in the sandbox; an independent auditor recomputes its numbers"],
+  reporter: ["Reporter", "Writes the brief from verified results only"],
+};
+let MISSIONS = [], mission = null, mfiles = {};
+function whoChip(agent) { const c = el("span", `who ${agent}`, AGENT_INFO[agent][0]); return c; }
+async function loadMissions() {
+  try { MISSIONS = await (await fetch("/api/missions")).json(); } catch { return; }
+  const g = $("#mgrid"); g.replaceChildren();
+  for (const m of MISSIONS) {
+    const b = el("button", "mcard"); b.type = "button"; b.setAttribute("aria-pressed", "false");
+    b.append(el("b", null, m.title), el("span", "for", m.for), el("p", null, m.pitch));
+    const team = el("span", "team"); team.append(whoChip("lead")); m.team.forEach(a => team.append(whoChip(a))); b.append(team);
+    b.onclick = () => pickMission(m, b); g.append(b);
+  }
+}
+function pickMission(m, card) {
+  mission = m; mfiles = {};
+  document.querySelectorAll(".mcard").forEach(c => c.setAttribute("aria-pressed", String(c === card)));
+  $("#mform").hidden = false; $("#mtitle").textContent = m.title; $("#mpitch").textContent = m.pitch;
+  $("#mgoal").value = m.goal; $("#msites").value = m.sites.join(", "); $("#msites-wrap").hidden = !m.team.includes("researcher");
+  const box = $("#mfiles"); box.replaceChildren();
+  for (const f of m.files) {
+    const row = el("div", "mfile");
+    const lab = el("div", "lab"); lab.append(el("b", null, f.label), el("small", null, f.help));
+    const got = el("span", "got");
+    const sample = el("button", "btn ghost", `Use sample: ${f.sample}`); sample.type = "button";
+    const up = el("label", "btn ghost", "Upload your own"); const inp = el("input"); inp.type = "file"; inp.accept = ".csv,.xlsx,.xls,.json"; up.append(inp);
+    const load = async (req, name) => {
+      got.textContent = `Opening ${name} in the sandbox…`; got.style.color = "";
+      try {
+        const res = await req; const d = await res.json(); if (!res.ok) throw new Error(d.detail || res.status);
+        mfiles[f.role] = d; got.textContent = `${d.filename}: ${d.profile.rows} rows, ${d.profile.columns.length} columns`;
+        printSlip({ title: `Profile ${d.filename}`, receipt: d.profiling_receipt, events: d.profiling_events, limits: d.limits });
+      } catch (e) { got.textContent = `Could not open the file: ${e.message}`; got.style.color = "var(--stamp)"; }
+      $("#mrun").disabled = busy || m.files.some(x => !mfiles[x.role]);
+    };
+    sample.onclick = () => load(api(`/api/samples/${encodeURIComponent(f.sample)}`, { method: "POST" }), f.sample);
+    inp.onchange = () => { if (!inp.files[0]) return; const fd = new FormData(); fd.append("file", inp.files[0]); load(api("/api/datasets", { method: "POST", body: fd }), inp.files[0].name); };
+    row.append(lab, sample, up, got); box.append(row);
+  }
+  $("#mrun").disabled = true;
+}
+$("#mstop").onclick = () => $("#stop").onclick();
+$("#mrun").onclick = async () => {
+  if (!mission || busy) return;
+  busy = true; viewOnly = false; currentRunId = null; $("#banner").hidden = true;
+  $("#mrun").disabled = true; $("#mrun").textContent = "Mission running…";
+  const stopBtn = $("#mstop"); stopBtn.hidden = false; stopBtn.disabled = false; stopBtn.textContent = "Stop";
+  const tl = $("#timeline"); tl.replaceChildren(); const steps = {};
+  const t0 = performance.now();
+  const tick = setInterval(() => $("#minfo").textContent = `${((performance.now() - t0) / 1000).toFixed(0)} s`, 500);
+  try {
+    const res = await api("/api/missions/run", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mission: mission.id, goal: $("#mgoal").value.trim() || null, isolation: isolation(),
+        dataset_ids: mission.files.map(f => mfiles[f.role].dataset_id),
+        domains: $("#msites").value.split(",").map(x => x.trim()).filter(Boolean) }) });
+    if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || `HTTP ${res.status}`); }
+    await readStream(res, tl, steps);
+  } catch (e) {
+    tl.append(el("li", "error", `Mission stopped: ${e.message}`));
+  } finally {
+    clearInterval(tick); busy = false; $("#mrun").textContent = "Run mission"; stopBtn.hidden = true;
+    $("#mrun").disabled = mission.files.some(x => !mfiles[x.role]); setReady(!!dataset);
+  }
+};
+let nested = false;
+function agentCard(tl, steps, step, agent, task) {
+  const key = `agent${step}`;
+  if (steps[key]) return steps[key];
+  const li = el("li", "agent"); const h = el("header");
+  const st = el("span", "state", "waiting");
+  h.append(whoChip(agent), el("h4", null, AGENT_INFO[agent][0]), el("span", "role", AGENT_INFO[agent][1]), st);
+  const taskP = el("p", "task", task ? `Task from the lead agent: ${task}` : "");
+  const sub = el("ol", "timeline subtl");
+  li.append(h, taskP, sub); tl.append(li);
+  return (steps[key] = { li, state: st, task: taskP, tl: sub, steps: {} });
+}
 
 function useDataset(info) {
   dataset = info; $("#profile").hidden = false; renderProfile(info); renderSuggestions(info.filename);
@@ -799,6 +945,34 @@ function handle(ev, tl, steps) {
     }
     printSlip({ title: ev.attempt > 1 ? `Run · attempt ${ev.attempt}` : "Run analysis", receipt: ev.receipt,
                 events: r.events, limits: r.limits, selfHealed: ev.attempt > 1 && r.status === "ok" });
+  } else if (ev.type === "mission_plan") {
+    const li = el("li", "step done");
+    li.append(el("span", "mark"), el("h4", null, `Mission plan: ${ev.title}`),
+      el("div", "sub", `${ev.brief}${ev.from_model ? "" : " (the lead agent's draft did not fit the team, so the standard plan is used)"}`));
+    const ol = el("ol", "planlist");
+    ev.steps.forEach(s => { const r = el("li"); r.append(whoChip(s.agent), el("span", null, s.task.length > 160 ? s.task.slice(0, 157) + "…" : s.task)); ol.append(r); });
+    li.append(ol); tl.append(li);
+    ev.steps.forEach(s => agentCard(tl, steps, s.step, s.agent, s.task));
+  } else if (ev.type === "agent_start") {
+    const c = agentCard(tl, steps, ev.step, ev.agent, ev.task);
+    c.state.className = "state working"; c.state.textContent = "working";
+    c.task.textContent = `Task from the lead agent: ${ev.task}`;
+    c.li.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  } else if (ev.type === "agent_event") {
+    const c = agentCard(tl, steps, ev.step, ev.agent, "");
+    const inner = ev.event;
+    if (["run", "done", "stopped"].includes(inner.type)) {
+      if (inner.type === "run") c.steps._mode = inner.mode || "analyze";
+      return;
+    }
+    nested = true;
+    try { handle(inner, c.tl, c.steps); } finally { nested = false; }
+  } else if (ev.type === "agent_done") {
+    const c = agentCard(tl, steps, ev.step, ev.agent, "");
+    const ok = ev.status === "done";
+    c.state.className = "state " + (ok ? "done" : "failed");
+    c.state.textContent = ok ? (ev.verified === "verified" ? "done, verified" : ev.verified === "mismatch" ? "done, check flagged" : "done") : ev.status;
+    if (ev.error) c.tl.append(el("li", "error", ev.error));
   } else if (ev.type === "scope") {
     const li = steps.scope || stepNode(tl, steps, "scope", "Sites");
     li.className = "step done";
@@ -999,8 +1173,12 @@ function handle(ev, tl, steps) {
   } else if (ev.type === "answer") {
     steps.explain?.remove();
     const li = el("li", "step done");
-    li.append(el("span", "mark"), el("h4", null, "Answer"));
+    li.append(el("span", "mark"), el("h4", null, ev.mission ? "Executive brief" : nested ? "Specialist's result" : "Answer"));
     const box = el("div", "answer"); box.innerHTML = md(ev.markdown); li.append(box);
+    if (ev.mission) {
+      const n = (ev.specialists || []).length;
+      li.append(el("div", "grounded", `Written by the reporter from ${n} specialist report${n === 1 ? "" : "s"}; it may use only numbers those sealed runs printed.`));
+    }
     if (ev.grounded_in_job) li.append(el("div", "grounded", `Every number above was printed by sandbox job ${ev.grounded_in_job}.`));
     const web = steps._mode === "research";
     if (web && ev.grounded_in_job) li.querySelector(".grounded").textContent = `Based on pages loaded by sandboxed browser job ${ev.grounded_in_job}.`;
@@ -1008,6 +1186,7 @@ function handle(ev, tl, steps) {
     else if (ev.verified === "mismatch") li.append(el("span", "badge no", web ? "Some claims are not backed by the pages" : "Independent recomputation disagrees"));
     else if (ev.verified === "inconclusive") li.append(el("span", "badge neutral", "Verification inconclusive"));
     const acts = el("div", "actions");
+    if (nested) { tl.append(li); return; }
     if (currentRunId && appConfig.auth !== undefined) {
       const pb = el("button", "btn ghost", "Download PDF report"); pb.type = "button";
       pb.title = "Built inside the sandbox by a fixed script, with its own receipt";

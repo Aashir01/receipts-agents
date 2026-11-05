@@ -1,0 +1,51 @@
+customer_name,email,signup_date,country,phone,total_spent
+"Petrov, Grace",GRACE.PETROV11@EXAMPLE.COM,"Mar 2, 2026",USA,415.555.0011,N/A
+SARA MALIK,sara.malik5@example.com,2026-06-26,U.S.,N/A,USD 759.26
+David Clark,david.clark6@example.com,"Jul 4, 2026",UK,415.555.0006,$902.13
+Bilal Sheikh, bilal.sheikh10@example.com,"Feb 24, 2026",us,0300-1234010,219.73
+Bilal Sheikh, bilal.sheikh30@example.com,2026/4/16,United States,415.555.0030,"$2,474.88"
+  DAVID Clark ,,"Sep 23, 2026",United Kingdom,N/A,"$2,234.03"
+Hina Okafor,hina.okafor17@example.com,05/09/2026,us,,"$2,466.64"
+"ROSSI, LI",li.rossi23@example.com,2026-06-08,U.S.,415.555.0023,494.44
+"Tanaka, Peter",peter.tanaka36@example.com,"Jan 19, 2026",United States,+1 (415) 555-0036,USD 712.07
+Zara Lopez,ZARA.LOPEZ35@EXAMPLE.COM,2026/9/14,UK,0300-1234035,N/A
+  LI Rossi ,li.rossi43@example.com,2026/8/27,Germany,415.555.0043,2337.91
+Tom Silva,tom.silva18@example.com,10/01/2026,PK,0300-1234018,N/A
+"PETROV, GRACE",GRACE.PETROV11@EXAMPLE.COM,"Mar 2, 2026",USA,415.555.0011,N/A
+Zara Lopez,ZARA.LOPEZ15@EXAMPLE.COM,2026/7/22,United Kingdom,415.555.0015,N/A
+Elena Ali,ELENA.ALI29@EXAMPLE.COM,"Mar 11, 2026",DE,415.555.0029,"$2,419.51"
+  JOHN smith ,john.smith40@example.com,2026-05-12,Germany,415.555.0040,520.39
+"Raza, Omar",omar.raza24@example.com,2026-07-13,UK,+1 (415) 555-0024,N/A
+HINA OKAFOR,hina.okafor17@example.com,05/09/2026,us,,"$2,466.64"
+Fatima Khan,fatima.khan7@example.com,09/08/2026,us,N/A,"$2,032.55"
+Elena Ali,elena.ali9@example.com,"Jan 19, 2026",U.K.,,USD 662.75
+Peter Tanaka,PETER.TANAKA16@EXAMPLE.COM,27/08/2026,Germany,+1 (415) 555-0016,USD 55.32
+  TOM Silva ,tom.silva38@example.com,"Mar 2, 2026",UK,+1 (415) 555-0038,1145.36
+"Iqbal, Amara",amara.iqbal39@example.com,07/04/2026,U.S.,+1 (415) 555-0039,"$1,326.75"
+Maria Brown,maria.brown2@example.com,"Mar 11, 2026",United Kingdom,,
+Ayesha Wei,ayesha.wei1@example.com,06/02/2026,Pakistan,N/A,USD 953.05
+  SARA Malik ,sara.malik5@example.com,2026-06-26,U.S.,N/A,USD 759.26
+Bilal Sheikh, bilal.sheikh30@example.com,2026/4/16,United States,415.555.0030,"$2,474.88"
+nina Diallo, nina.diallo33@example.com,"Jul 4, 2026",U.S.,N/A,N/A
+  KENJI Farooq , kenji.farooq28@example.com,2026-02-06,United States,415.555.0028,1680.29
+"Rossi, Li",li.rossi23@example.com,2026-06-08,U.S.,415.555.0023,494.44
+"Smith, John",john.smith20@example.com,2026/3/20,UK,N/A,$344.29
+Omar Raza, omar.raza4@example.com,21/05/2026,PK,N/A,N/A
+john smith,john.smith0@example.com,01/01/2026,U.K.,N/A,271.63
+"Okafor, Hina",hina.okafor37@example.com,"Feb 24, 2026",U.S.,+1 (415) 555-0037,1593.41
+"Rossi, Li", li.rossi3@example.com,"Apr 16, 2026",PK,+1 (415) 555-0003,USD 377.41
+  MARIA Brown , maria.brown22@example.com,2026-05-03,UK,N/A,USD 173.15
+Maria Brown,maria.brown2@example.com,"Mar 11, 2026",United Kingdom,,
+"Farooq, Kenji",kenji.farooq8@example.com,14/09/2026,DE,415.555.0008,1303.74
+"Novak, Ahmed",ahmed.novak12@example.com,"Apr 7, 2026",pakistan ,+1 (415) 555-0012,2089.93
+Ayesha Wei, ayesha.wei21@example.com,25/04/2026,United States,N/A,$29.75
+"Garcia, Lucas", lucas.garcia14@example.com,2026/6/17,United States,+1 (415) 555-0014,"$1,817.50"
+  NINA Diallo , nina.diallo13@example.com,12/05/2026,U.S.,,1977.06
+Amara Iqbal,amara.iqbal19@example.com,2026/2/15,PK,415.555.0019,USD 171.04
+Ahmed Novak,ahmed.novak32@example.com,"Jun 26, 2026",United Kingdom,+1 (415) 555-0032,
+  SARA Malik ,sara.malik25@example.com,"Aug 18, 2026",UK,,
+Lucas Garcia,LUCAS.GARCIA34@EXAMPLE.COM,2026-08-09,United States,+1 (415) 555-0034,678.60
+"Petrov, Grace",grace.petrov31@example.com,2026/5/21,PK,0300-1234031,1064.77
+Maria Brown,maria.brown42@example.com,2026-07-22,DE,0300-1234042,111.63
+  FATIMA Khan , fatima.khan27@example.com,2026-01-01,Germany,,1116.45
+Ayesha Wei,ayesha.wei41@example.com,17/06/2026,United States,0300-1234041,USD 1125.30

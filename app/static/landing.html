@@ -133,6 +133,19 @@
   .proof.ok { color: var(--green); } .proof.no { color: var(--red); }
   .modes a.go { font-weight: 600; color: var(--blue); }
 
+  .mlede { flex: 2 1 600px; margin: 0; font-size: 18px; line-height: 1.6; color: var(--body); }
+  .mgrid { margin-top: 36px; display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); border: 1.5px solid var(--ink); }
+  .mgrid a { display: flex; flex-direction: column; gap: 10px; padding: 26px; text-decoration: none; border-right: 1.5px solid var(--ink); }
+  .mgrid a:last-child { border-right: 0; }
+  .mgrid a:hover { background: var(--hover); }
+  @media (max-width: 1100px) { .mgrid a { border-right: 0; border-bottom: 1.5px solid var(--ink); } .mgrid a:last-child { border-bottom: 0; } }
+  .mgrid .for { font-size: 13px; color: var(--muted); }
+  .mgrid b { font: 700 23px/1.15 var(--display); letter-spacing: -0.02em; }
+  .mgrid a > span:not(.for):not(.team) { color: var(--body); font-size: 15px; line-height: 1.55; }
+  .mgrid .team { margin-top: auto; display: flex; flex-wrap: wrap; gap: 5px; padding-top: 6px; }
+  .mgrid .team i { font: 700 12px/1 var(--mono); font-style: normal; padding: 4px 6px; border: 1.5px solid currentColor; }
+  .mgrid .lead { color: var(--ink); } .mgrid .res { color: var(--blue); } .mgrid .ana { color: var(--green); } .mgrid .rep { color: #B54708; }
+  [data-theme="dark"] .mgrid .rep { color: #F0B34B; }
   .stamps { margin-top: 36px; display: grid; grid-template-columns: repeat(auto-fit, minmax(330px, 1fr)); gap: 16px; }
   .stamps div { border: 1.5px solid var(--ink); padding: 24px; }
   .stamps .st { display: inline-block; border: 2.5px solid currentColor; font: 700 15px/1.3 var(--mono); padding: 2px 9px; letter-spacing: .05em; }
@@ -174,10 +187,10 @@
       <span>countersign</span>
     </a>
     <nav aria-label="Main">
-      <a href="#signed">Signed twice</a>
+      <a href="#missions">Missions</a>
       <a href="#how">How it works</a>
-      <a href="#sealed">Sealed by design</a>
-      <a href="#vultr">Built on Vultr</a>
+      <a href="#sealed">Security</a>
+      <a href="#vultr">Vultr</a>
       <a href="https://github.com/Aashir01/receipts-agents">GitHub</a>
     </nav>
     <div class="cta">
@@ -243,6 +256,19 @@
     </div>
   </section>
 
+  <section class="wrap block" id="missions" aria-labelledby="missions-title">
+    <div class="split">
+      <h2 class="sec" id="missions-title">Give it a business job, not a prompt</h2>
+      <p class="mlede">Pick a mission. A lead agent plans it and hands each step to a specialist: the researcher with its sealed browser, the analyst with its independent auditor, and the reporter. You get an executive brief and a PDF, and every number in it was printed by a sealed run.</p>
+    </div>
+    <div class="mgrid">
+      <a href="/workspace?tour=missions&amp;m=price_check"><span class="for">E-commerce and retail</span><b>Competitor price check</b><span>Collects competitor prices from approved sites and shows where you are overpriced or leaving money on the table.</span><span class="team"><i class="lead">Lead</i><i class="res">Researcher</i><i class="ana">Analyst</i><i class="rep">Reporter</i></span></a>
+      <a href="/workspace?tour=missions&amp;m=reconcile"><span class="for">Finance and accounting</span><b>Invoice reconciliation</b><span>Matches invoices to payments and flags what is unpaid, part-paid, overpaid, duplicated or unmatched.</span><span class="team"><i class="lead">Lead</i><i class="ana">Analyst</i><i class="rep">Reporter</i></span></a>
+      <a href="/workspace?tour=missions&amp;m=monthly_report"><span class="for">Management and founders</span><b>Monthly business report</b><span>Turns a sales export into a board-ready brief: KPIs, trends, top movers and risks, every number recomputed.</span><span class="team"><i class="lead">Lead</i><i class="ana">Analyst</i><i class="rep">Reporter</i></span></a>
+      <a href="/workspace?tour=missions&amp;m=cleanup"><span class="for">Operations and CRM</span><b>Messy data clean-up</b><span>Cleans a messy export into a consistent file and logs every change, so nothing is fixed silently.</span><span class="team"><i class="lead">Lead</i><i class="ana">Analyst</i><i class="rep">Reporter</i></span></a>
+    </div>
+  </section>
+
   <section class="wrap block" id="how" aria-labelledby="how-title">
     <div class="split">
       <h2 class="sec" id="how-title">One run, itemised</h2>
@@ -285,6 +311,7 @@
   <section class="wrap block" aria-labelledby="try-title">
     <h2 class="sec" id="try-title">See it work in under a minute</h2>
     <div class="try">
+      <a href="/workspace?tour=missions"><b>Run a business mission</b><span>Pick invoice reconciliation, load the samples, and watch the lead agent brief its team.</span><em>Open the missions</em></a>
       <a href="/workspace?tour=inject"><b>Watch a prompt injection get contained</b><span>A support ticket hides instructions to steal secrets. See what the sandbox does with them.</span><em>Open this scenario</em></a>
       <a href="/workspace?tour=verify"><b>A verified analysis with charts</b><span>Margins by region and the monthly trend, recomputed by the auditor.</span><em>Open this scenario</em></a>
       <a href="/workspace?tour=web"><b>Research the web in a sealed browser</b><span>Approve the sites, watch the browser work, then analyse what it found.</span><em>Open this scenario</em></a>
