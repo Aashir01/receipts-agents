@@ -879,7 +879,9 @@ async def research_run(body: Research, request: Request):
         ev = research.evidence_check(final.get("evidence"), seen_texts)
         claims = (final.get("answer") or "") + "\nEvidence quotes: " + json.dumps(final.get("evidence") or [])[:1500]
         vis = await llm.vision_check(last_shot["content_b64"] if last_shot else "", claims)
-        if (ev["total"] and ev["matched"] < ev["total"]) or vis["status"] == "inconsistent":
+        # Quotes decide: each must appear word for word in a page the browser loaded. The vision model
+        # sees only the final screenshot, so it can confirm a claim but not overrule the evidence.
+        if ev["total"] and ev["matched"] < ev["total"]:
             vstatus = "mismatch"
         elif ev["total"] and ev["matched"] == ev["total"]:
             vstatus = "verified"

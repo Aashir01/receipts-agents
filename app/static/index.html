@@ -342,6 +342,10 @@
   .atiles div:last-child { border-right: 0; }
   .atiles b { display: block; font: 700 24px/1.1 var(--display); font-variant-numeric: tabular-nums; }
   .atiles span { font-size: 12.5px; color: var(--muted); }
+  .mdtable { overflow-x: auto; margin: 8px 0; }
+  .mdtable table { border-collapse: collapse; font-size: 14px; }
+  .mdtable th, .mdtable td { border-bottom: 1px solid var(--line); padding: 6px 10px; text-align: left; vertical-align: top; }
+  .mdtable th { color: var(--muted); font-weight: 600; }
   .atable { overflow-x: auto; border: 1.5px solid var(--ink); }
   .atable table { border-collapse: collapse; width: 100%; font-size: 13px; }
   .atable th, .atable td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
@@ -1639,9 +1643,24 @@ async function pollPool() {
 function md(src) {
   const esc = s => s.replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const inline = s => esc(s).replace(/`([^`]+)`/g, "<code>$1</code>").replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>").replace(/\*([^*]+)\*/g, "<em>$1</em>");
-  const out = []; let list = null;
+  const out = []; let list = null; let rows = null;
+  const cells = l => l.replace(/^\s*\|/, "").replace(/\|\s*$/, "").split("|").map(c => c.trim());
+  const flushTable = () => {
+    if (!rows) return;
+    const body = rows.filter(r => !r.every(c => /^:?-{2,}:?$/.test(c)));
+    const [head, ...rest] = body;
+    out.push(`<div class="mdtable"><table><thead><tr>${head.map(c => `<th>${inline(c)}</th>`).join("")}</tr></thead><tbody>` +
+      rest.map(r => `<tr>${r.map(c => `<td>${inline(c)}</td>`).join("")}</tr>`).join("") + "</tbody></table></div>");
+    rows = null;
+  };
   for (const raw of src.split("\n")) {
     const l = raw.trimEnd();
+    if (/^\s*\|.*\|\s*$/.test(l)) {                       // a markdown table row
+      if (list) { out.push(`</${list}>`); list = null; }
+      (rows ||= []).push(cells(l)); continue;
+    }
+    if (rows && !l.trim()) continue;                          // blank lines inside a table
+    flushTable();
     const ul = l.match(/^\s*[-*]\s+(.*)/), ol = l.match(/^\s*\d+[.)]\s+(.*)/);
     if (ul || ol) {
       const tag = ul ? "ul" : "ol";
@@ -1654,6 +1673,7 @@ function md(src) {
     else if (l.trim()) out.push(`<p>${inline(l)}</p>`);
   }
   if (list) out.push(`</${list}>`);
+  flushTable();
   return out.join("");
 }
 
