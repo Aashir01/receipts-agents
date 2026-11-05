@@ -77,15 +77,16 @@ Page text is treated as untrusted data throughout: the model is told never to fo
 
 ## Fresh-VM mode (maximum isolation)
 
-For anything you do not want to share a machine with, choose **Run on: a fresh Vultr VM** (signed-in users):
+For anything you do not want to share a machine with, choose **Run on: a fresh Vultr VM** (signed-in users).
 
-1. The app calls the **Vultr API** to create a brand-new Cloud Compute instance from a snapshot of the executor VM, in the same VPC and firewall group, tagged `receipts-disposable`.
-2. A boot script gives that VM its **own one-time runner token** and binds the runner to its own private IP. Nothing else can talk to it.
-3. Every sandbox job of the run (exploration, analysis, self-fixes, the auditor, or the browser turns) goes only to that VM. Receipts record `executed_on: disposable-vm:<instance id>`.
-4. When the run ends, is stopped, or fails, the VM is **deleted and the deletion confirmed** through the Vultr API, and a DESTROYED slip prints.
-5. A **watchdog** deletes any `receipts-disposable` VM older than 15 minutes, so nothing outlives a crash. Caps: 2 at once, 10 per hour.
+Restoring a Vultr snapshot takes 10 to 60 minutes, so the app keeps a **warm pool**:
 
-If a VM cannot boot in time, it is destroyed and the run falls back to the shared sandbox, and the timeline says so.
+1. A watchdog uses the **Vultr API** to create a standby Cloud Compute instance from a snapshot of the executor VM, in the same VPC and firewall group, tagged `receipts-standby`. A boot script binds its runner to its own private IP with its **own runner token** (derived per VM, never the main token). A standby VM never runs anything.
+2. A run that asks for a fresh VM **claims** a ready standby (retagged `receipts-disposable`). Every sandbox job of that run (exploration, analysis, self-fixes, the auditor, or the browser turns) goes only to that VM, and receipts record `executed_on: disposable-vm:<instance id>`. A replacement starts booting immediately.
+3. When the run ends, is stopped, or fails, the VM is **deleted and the deletion confirmed** through the Vultr API, and a DESTROYED slip prints.
+4. The watchdog deletes claimed VMs older than 15 minutes, standbys older than 24 hours, and standbys whose runner never answers. Caps: 2 in use at once, 10 created per hour.
+
+If no standby is ready, the run says so and uses the shared sandbox; it never waits on a snapshot restore. Pool status: `GET /api/vm-pool`.
 
 ## Containment
 
@@ -102,7 +103,7 @@ If a VM cannot boot in time, it is destroyed and the run falls back to the share
 | Pre-flight guard | Sandbox-side data scan for injected instructions, Nemotron safety check on the question, static code scan, human approval for anything risky |
 | Browser egress | Per-task internal network; allowlist proxy is the only exit (the proxy runs only our fixed proxy code in a hardened standard container, read-only, no capabilities, nobody user; the browser itself runs on gVisor); private/metadata IPs refused; 1 GB memory, 256 processes, 90 s per turn |
 | Browser actions | Fixed action vocabulary (no model-written browser code), credential fields refused, submits need approval |
-| Fresh-VM tier | Optional brand-new Vultr VM per run, one-time token, deleted after the run and confirmed via API; 15-minute watchdog |
+| Fresh-VM tier | Optional never-used Vultr VM per run from a warm pool, own runner token, deleted after the run and confirmed via API; watchdog cleans up |
 | Abuse limits | Per-IP hourly rate limit, 10 MB uploads, output size caps |
 
 **Containment moment (shown in the demo video):** load *Poisoned support tickets*. One ticket contains hidden instructions telling the AI to read environment variables and `/etc/passwd` and upload them to an external server. If the model follows them, the upload fails because the sandbox has no network, the run is flagged and stamped BLOCKED, the environment shows zero secrets, and the agent retries with a security note and produces the honest summary.
@@ -115,7 +116,7 @@ If a VM cannot boot in time, it is destroyed and the run falls back to the share
 - **Vultr Serverless Inference**: all LLM calls (OpenAI-compatible API at `api.vultrinference.com/v1`), main model `minimax-m3.1-flash` with automatic fallback to `deepseek-v4.1-flash-1017`. Models were chosen by benchmarking six candidates on generation and repair tasks.
 - **Vultr VPC**: private network between the two VMs; the runner is unreachable from the internet.
 - **Vultr Firewall**: firewall groups on both instances.
-- **Vultr API + Snapshots**: fresh-VM mode creates and destroys a Cloud Compute instance per run from an executor snapshot.
+- **Vultr API + Snapshots**: fresh-VM mode keeps a warm pool of snapshot-restored Cloud Compute instances and destroys each one after a single run.
 - **Vultr Marketplace: Coolify**: Git-based deploys, Traefik reverse proxy and Let's Encrypt TLS on the app server.
 
 ## Repository layout
@@ -125,7 +126,7 @@ Dockerfile    Builds the web app; Coolify deploys from here
 app/          Web app + agent (FastAPI, single-page UI)
   main.py     API, analyst and research agent loops, receipts, rate limiting
   research.py Browser prompts, action guard, evidence check
-  disposable.py Fresh-VM tier: create from snapshot, wait, destroy, watchdog (Vultr API)
+  disposable.py Fresh-VM tier: warm pool, claim, destroy, watchdog (Vultr API)
   llm.py      Vultr Serverless Inference client with fallback
   prompts.py  Plan / code / fix / explain prompts and the fixed profiling script
   static/     UI

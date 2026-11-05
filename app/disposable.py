@@ -1,11 +1,13 @@
 """
-Disposable executor VMs (maximum isolation tier).
+Disposable executor VMs (maximum isolation tier), served from a warm pool.
 
-For a run marked "fresh VM", the app creates a brand-new Vultr Cloud Compute instance from a
-snapshot of the executor VM, in the same VPC and firewall group, with its own one-time runner
-token. The run's sandbox jobs go only to that VM; afterwards the VM is destroyed and the
-deletion is confirmed through the Vultr API. A watchdog deletes any disposable VM older than
-DISPOSABLE_MAX_AGE_MIN minutes, so nothing outlives a crash.
+Restoring a Vultr snapshot takes 10 to 60 minutes, so VMs are booted ahead of time: the app
+keeps DISPOSABLE_POOL_SIZE standby instances, each a brand-new Cloud Compute instance restored
+from a snapshot of the executor VM, in the same VPC and firewall group, with its own runner
+token. A standby VM never runs anything. A run that asks for a fresh VM claims one, uses it
+for that run only, and destroys it (deletion confirmed through the Vultr API); a replacement
+starts booting in the background. A watchdog deletes claimed VMs older than
+DISPOSABLE_MAX_AGE_MIN minutes, stale standbys, and standbys whose runner never came up.
 
 The Vultr API key lives only on the app server. Restrict it in the Vultr console to the app
 server's IP address.
@@ -13,6 +15,8 @@ server's IP address.
 
 import asyncio
 import base64
+import hashlib
+import hmac
 import os
 import secrets
 import time
@@ -28,17 +32,25 @@ SNAPSHOT_ID = os.environ.get("DISPOSABLE_SNAPSHOT_ID", "")
 VPC_ID = os.environ.get("DISPOSABLE_VPC_ID", "")
 PLAN = os.environ.get("DISPOSABLE_PLAN", "")
 RUNNER_PORT = int(os.environ.get("DISPOSABLE_RUNNER_PORT", "8080"))
-TAG = "receipts-disposable"
+TAG = "receipts-disposable"          # claimed: serving (or served) exactly one run
+STANDBY_TAG = "receipts-standby"     # booted ahead of time, never used
+POOL_SIZE = int(os.environ.get("DISPOSABLE_POOL_SIZE", "1"))
+STANDBY_MAX_H = float(os.environ.get("DISPOSABLE_STANDBY_MAX_H", "24"))
+BROKEN_AFTER_MIN = float(os.environ.get("DISPOSABLE_BROKEN_AFTER_MIN", "15"))
+_SECRET = (os.environ.get("RUNNER_TOKEN", "") or secrets.token_hex(16)).encode()
 MAX_AGE_MIN = int(os.environ.get("DISPOSABLE_MAX_AGE_MIN", "15"))
 MAX_CONCURRENT = int(os.environ.get("DISPOSABLE_MAX_CONCURRENT", "2"))
 PER_HOUR = int(os.environ.get("DISPOSABLE_PER_HOUR", "10"))
-BOOT_TIMEOUT_S = int(os.environ.get("DISPOSABLE_BOOT_TIMEOUT_S", "480"))
 ENABLED = bool(KEY)
 
 _c = httpx.AsyncClient(timeout=httpx.Timeout(25, connect=8))
 _template: dict | None = None
 _created_at: list[float] = []          # for the hourly cap
-LIVE: dict[str, dict] = {}             # instance id -> {run_id, created}
+LIVE: dict[str, dict] = {}             # claimed instance id -> {run_id, claimed}
+STATUS: dict = {"ready": 0, "booting": 0, "claimed": 0, "last_error": "", "checked": 0, "fails": 0}
+_active_since: dict[str, float] = {}   # standby id -> first time seen active (broken-boot detection)
+_claim_lock = asyncio.Lock()
+_maint_lock = asyncio.Lock()
 
 
 class VMError(Exception):
@@ -130,36 +142,85 @@ systemctl restart agentrush-runner
 """
 
 
-def can_create() -> str | None:
-    now = time.time()
-    _created_at[:] = [t for t in _created_at if now - t < 3600]
+
+def token_for(label: str) -> str:
+    """Per-VM runner token, derived so it survives app restarts and never equals the main token."""
+    return hmac.new(_SECRET, f"disposable:{label}".encode(), hashlib.sha256).hexdigest()
+
+
+def can_use() -> str | None:
     if not ENABLED:
         return "Fresh-VM mode is not configured on this server"
     if len(LIVE) >= MAX_CONCURRENT:
-        return f"{len(LIVE)} fresh VMs are already running; try again in a few minutes"
-    if len(_created_at) >= PER_HOUR:
-        return "The hourly limit for fresh VMs is reached; try again later"
+        return f"{len(LIVE)} fresh VMs are already in use; try again in a few minutes"
     return None
 
 
-async def create(run_id: str) -> dict:
+def _hourly_ok() -> bool:
+    now = time.time()
+    _created_at[:] = [t for t in _created_at if now - t < 3600]
+    return len(_created_at) < PER_HOUR
+
+
+async def create_standby() -> dict:
     t = await template()
-    token = secrets.token_hex(32)
-    label = f"rcpt-{run_id[:8]}"
+    label = f"rcpt-{secrets.token_hex(4)}"
     body = {"region": t["region"], "plan": t["plan"], "snapshot_id": t["snapshot_id"], "label": label,
-            "hostname": label, "tags": [TAG, f"run-{run_id[:8]}"], "attach_vpc": t["vpcs"],
+            "hostname": label, "tags": [STANDBY_TAG], "attach_vpc": t["vpcs"],
             "backups": "disabled", "enable_ipv6": False,
-            "user_data": base64.b64encode(user_data(token, t["template_ip"]).encode()).decode()}
+            "user_data": base64.b64encode(user_data(token_for(label), t["template_ip"]).encode()).decode()}
     if t["firewall_group_id"]:
         body["firewall_group_id"] = t["firewall_group_id"]
     r = await _req("POST", "/instances", json=body)
     if r.status_code not in (200, 201, 202):
         raise VMError(f"Vultr API refused to create the VM ({r.status_code}): {r.text[:200]}")
-    inst = r.json()["instance"]
     _created_at.append(time.time())
-    LIVE[inst["id"]] = {"run_id": run_id, "created": time.time()}
-    return {"id": inst["id"], "label": label, "token": token, "region": t["region"], "plan": t["plan"],
-            "created": time.time(), "ip": None, "url": None}
+    return r.json()["instance"]
+
+
+async def _list(tag: str) -> list[dict]:
+    r = await _req("GET", "/instances", params={"tag": tag, "per_page": 100})
+    if r.status_code != 200:
+        raise VMError(f"Vultr API returned {r.status_code} listing instances")
+    return [i for i in r.json().get("instances", []) if tag in (i.get("tags") or [])]
+
+
+async def _runner_ok(inst: dict) -> bool:
+    ip = inst.get("internal_ip") or ""
+    if not (inst.get("status") == "active" and inst.get("power_status") == "running" and ip.startswith(("10.", "127."))):
+        return False
+    try:
+        h = await _c.get(f"http://{ip}:{RUNNER_PORT}/alive", headers={"X-Runner-Token": token_for(inst["label"])}, timeout=4)
+        return h.status_code == 200
+    except httpx.HTTPError:
+        return False
+
+
+async def claim(run_id: str) -> tuple[dict | None, str]:
+    """Take a ready standby VM for this run. Returns (vm, "") or (None, reason)."""
+    async with _claim_lock:
+        try:
+            standby = await _list(STANDBY_TAG)
+        except VMError as e:
+            return None, str(e)
+        booting = 0
+        for inst in sorted(standby, key=lambda i: i.get("date_created", "")):
+            if not await _runner_ok(inst):
+                booting += 1
+                continue
+            tags = [TAG, f"run-{run_id[:8]}", f"claimed-{int(time.time())}"]
+            r = await _req("PATCH", f"/instances/{inst['id']}", json={"tags": tags})
+            if r.status_code not in (200, 202, 204):
+                continue
+            LIVE[inst["id"]] = {"run_id": run_id, "claimed": time.time()}
+            asyncio.create_task(maintain())          # start booting the replacement now
+            return {"id": inst["id"], "label": inst["label"], "token": token_for(inst["label"]),
+                    "region": inst.get("region"), "plan": inst.get("plan"), "ip": inst["internal_ip"],
+                    "url": f"http://{inst['internal_ip']}:{RUNNER_PORT}", "created": time.time(),
+                    "booted_min": round(_age_min(inst), 1)}, ""
+        if booting:
+            return None, "the pre-booted VM is still restoring from the snapshot"
+        return None, STATUS.get("last_error") or "no pre-booted VM exists yet"
 
 
 async def get(instance_id: str) -> dict | None:
@@ -169,30 +230,6 @@ async def get(instance_id: str) -> dict | None:
     if r.status_code != 200:
         raise VMError(f"Vultr API returned {r.status_code}")
     return r.json().get("instance")
-
-
-async def wait_ready(vm: dict, should_stop) -> bool:
-    """Wait until Vultr reports the VM running with a private IP and its runner accepts our token."""
-    deadline = vm["created"] + BOOT_TIMEOUT_S
-    while time.time() < deadline:
-        if should_stop():
-            return False
-        inst = await get(vm["id"])
-        if inst is None:
-            raise VMError("The VM disappeared while booting")
-        ip = inst.get("internal_ip") or ""
-        if inst.get("status") == "active" and inst.get("power_status") == "running" and ip.startswith(("10.", "127.")):
-            vm["ip"] = ip
-            vm["url"] = f"http://{ip}:{RUNNER_PORT}"
-            try:
-                h = await _c.get(f"{vm['url']}/alive", headers={"X-Runner-Token": vm["token"]}, timeout=4)
-                if h.status_code == 200:
-                    vm["ready_s"] = round(time.time() - vm["created"], 1)
-                    return True
-            except httpx.HTTPError:
-                pass
-        await asyncio.sleep(5)
-    raise VMError(f"The VM was not ready within {BOOT_TIMEOUT_S} s")
 
 
 async def destroy(instance_id: str) -> dict:
@@ -215,36 +252,67 @@ async def destroy(instance_id: str) -> dict:
     return out
 
 
-def _age_min(inst: dict) -> float:
+def _age_min(inst: dict, since: str | None = None) -> float:
     try:
-        created = datetime.fromisoformat(inst["date_created"].replace("Z", "+00:00"))
+        created = datetime.fromisoformat((since or inst["date_created"]).replace("Z", "+00:00"))
     except (KeyError, ValueError):
         return 0
     return (datetime.now(timezone.utc) - created).total_seconds() / 60
 
 
-async def reap() -> list[str]:
-    """Delete disposable VMs older than the maximum age (the safety net behind every run)."""
+def _claimed_age_min(inst: dict) -> float:
+    for t in inst.get("tags") or []:
+        if t.startswith("claimed-") and t[8:].isdigit():
+            return (time.time() - int(t[8:])) / 60
+    return _age_min(inst)
+
+
+async def maintain() -> dict:
+    """Watchdog pass: delete expired or broken VMs, then refill the standby pool."""
     if not ENABLED:
-        return []
-    r = await _req("GET", "/instances", params={"tag": TAG, "per_page": 100})
-    if r.status_code != 200:
-        return []
-    deleted = []
-    for inst in r.json().get("instances", []):
-        if TAG in (inst.get("tags") or []) and _age_min(inst) > MAX_AGE_MIN:
-            res = await destroy(inst["id"])
-            if res["requested"]:
-                deleted.append(inst["id"])
-    return deleted
+        return STATUS
+    async with _maint_lock:
+        return await _maintain()
+
+
+async def _maintain() -> dict:
+    try:
+        for inst in await _list(TAG):                              # claimed VMs
+            if _claimed_age_min(inst) > MAX_AGE_MIN:
+                await destroy(inst["id"])
+                print(f"[watchdog] deleted claimed VM {inst['label']} (older than {MAX_AGE_MIN} min)", flush=True)
+        standby = await _list(STANDBY_TAG)
+        ready, booting = 0, 0
+        for inst in sorted(standby, key=lambda i: i.get("date_created", "")):
+            if _age_min(inst) > STANDBY_MAX_H * 60 or ready + booting >= POOL_SIZE:
+                await destroy(inst["id"])
+                continue
+            if await _runner_ok(inst):
+                ready += 1
+                STATUS["fails"] = 0
+                continue
+            if inst.get("status") == "active" and inst.get("server_status") == "ok":
+                first = _active_since.setdefault(inst["id"], time.time())
+                if time.time() - first > BROKEN_AFTER_MIN * 60:
+                    await destroy(inst["id"])
+                    STATUS["fails"] += 1
+                    STATUS["last_error"] = ("a standby VM finished booting but its runner never answered; "
+                                            "check the executor snapshot")
+                    print(f"[watchdog] {STATUS['last_error']} ({inst['label']})", flush=True)
+                    continue
+            booting += 1
+        if ready + booting < POOL_SIZE and STATUS["fails"] < 2 and _hourly_ok():
+            inst = await create_standby()
+            booting += 1
+            print(f"[watchdog] booting standby VM {inst['label']} from the executor snapshot", flush=True)
+        STATUS.update(ready=ready, booting=booting, claimed=len(LIVE), checked=int(time.time()))
+    except Exception as e:  # noqa: BLE001
+        STATUS["last_error"] = f"{type(e).__name__}: {str(e)[:200]}"
+        print(f"[watchdog] {STATUS['last_error']}", flush=True)
+    return STATUS
 
 
 async def watchdog() -> None:
     while True:
-        try:
-            gone = await reap()
-            if gone:
-                print(f"[watchdog] deleted stale disposable VMs: {gone}", flush=True)
-        except Exception as e:  # noqa: BLE001
-            print(f"[watchdog] {type(e).__name__}: {e}", flush=True)
+        await maintain()
         await asyncio.sleep(60)

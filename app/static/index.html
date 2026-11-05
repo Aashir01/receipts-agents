@@ -316,7 +316,7 @@
       <fieldset>
         <legend>Run on</legend>
         <label><input type="radio" name="iso" value="container" checked> Shared sandbox <small>seconds</small></label>
-        <label><input type="radio" name="iso" value="vm"> A fresh Vultr VM <small>about 2 to 4 min to boot, destroyed after the run</small></label>
+        <label><input type="radio" name="iso" value="vm"> A fresh Vultr VM <small id="vmstate">used once, destroyed after the run</small></label>
       </fieldset>
     </div>
     <section class="block ask" id="research" hidden>
@@ -771,7 +771,9 @@ function handle(ev, tl, steps) {
       li.querySelector(".sub").textContent = `Vultr instance ${ev.label} (${ev.instance_id.slice(0, 8)}) in ${ev.region}, plan ${ev.plan}, booting from the executor snapshot with a one-time runner token.`;
     } else if (ev.status === "ready") {
       li.className = "step done";
-      li.querySelector(".sub").textContent = `Instance ${ev.label} is up on private IP ${ev.ip} after ${ev.ready_s} s. Every sandbox job in this run goes only to this machine.`;
+      li.querySelector(".sub").textContent = ev.booted_min != null
+        ? `Vultr instance ${ev.label} was restored from the executor snapshot ${Math.round(ev.booted_min)} min ago and has never run anything. Every sandbox job in this run goes only to it, on private IP ${ev.ip}; it is destroyed afterwards.`
+        : `Instance ${ev.label} is up on private IP ${ev.ip}. Every sandbox job in this run goes only to this machine.`;
     } else if (ev.status === "destroyed") {
       const end = steps["vm-end"] || stepNode(tl, steps, "vm-end", "Fresh VM destroyed");
       end.className = "step " + (ev.requested ? "done" : "fail");
@@ -1095,6 +1097,16 @@ async function initAuth() {
   }
   renderAcct(); loadHistory();
   $("#where").hidden = !appConfig.fresh_vm;
+  if (appConfig.fresh_vm) { pollPool(); setInterval(pollPool, 30000); }
+}
+
+async function pollPool() {
+  try {
+    const p = await (await fetch("/api/vm-pool")).json();
+    $("#vmstate").textContent = p.ready > 0 ? "ready now, used once, destroyed after the run"
+      : p.booting > 0 ? "preparing: Vultr is restoring one from the snapshot (10 to 60 min)"
+      : "not ready yet, runs fall back to the shared sandbox";
+  } catch { /* keep the last text */ }
 }
 
 /* ---------- tiny, escaped markdown ---------- */

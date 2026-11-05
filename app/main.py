@@ -290,44 +290,27 @@ async def _teardown(vm: dict):
 
 
 async def _provision(run_id: str):
-    """Create a brand-new Vultr VM for this run and wait for its runner. Falls back to the shared
-    sandbox (and says so) if anything goes wrong."""
+    """Give this run a fresh Vultr VM from the warm pool: booted from the executor snapshot ahead
+    of time, never used, destroyed after this run. Falls back to the shared sandbox (and says so)."""
     run = ACTIVE[run_id]
-    why = disposable.can_create()
+    why = disposable.can_use()
     if why:
         yield {"type": "vm", "status": "unavailable", "message": f"{why}. This run uses the shared sandbox."}
         return
-    yield {"type": "step", "id": "vm", "status": "running", "title": "Creating a fresh Vultr VM for this run"}
-    try:
-        vm = await disposable.create(run_id)
-    except Exception as e:  # noqa: BLE001
-        yield {"type": "step", "id": "vm", "status": "failed", "title": "Could not create a fresh VM"}
-        yield {"type": "vm", "status": "failed", "message": f"{e}. This run uses the shared sandbox."}
+    yield {"type": "step", "id": "vm", "status": "running", "title": "Taking a fresh Vultr VM for this run"}
+    vm, reason = await disposable.claim(run_id)
+    if not vm:
+        yield {"type": "step", "id": "vm", "status": "failed", "title": "No fresh VM ready yet"}
+        yield {"type": "vm", "status": "unavailable",
+               "message": f"No fresh VM is ready yet: {reason}. Restoring the executor snapshot on Vultr "
+                          "takes 10 to 60 minutes and happens in the background. This run uses the shared sandbox."}
         return
     run["vm"] = vm
-    yield {"type": "vm", "status": "created", "instance_id": vm["id"], "label": vm["label"],
-           "region": vm["region"], "plan": vm["plan"]}
-    task = asyncio.create_task(disposable.wait_ready(vm, lambda: run.get("stop")))
-    while not task.done():
-        done, _ = await asyncio.wait({task}, timeout=15)
-        if not done:
-            yield {"type": "step", "id": "vm", "status": "running",
-                   "title": f"Booting fresh VM {vm['label']} from the executor snapshot "
-                            f"({int(time.time() - vm['created'])} s)"}
-    try:
-        ok = task.result()
-    except Exception as e:  # noqa: BLE001
-        yield {"type": "step", "id": "vm", "status": "failed", "title": "The fresh VM did not come up"}
-        async for item in _teardown(vm):
-            yield item
-        run["vm"] = None
-        yield {"type": "vm", "status": "failed", "message": f"{e}. This run uses the shared sandbox."}
-        return
-    if not ok:
-        raise Stopped()
-    yield {"type": "step", "id": "vm", "status": "done", "title": f"Fresh VM {vm['label']} ready in {vm['ready_s']} s"}
+    yield {"type": "step", "id": "vm", "status": "done", "title": f"Fresh VM {vm['label']} assigned to this run only"}
     yield {"type": "vm", "status": "ready", "instance_id": vm["id"], "label": vm["label"], "ip": vm["ip"],
-           "ready_s": vm["ready_s"], "region": vm["region"], "plan": vm["plan"]}
+           "booted_min": vm["booted_min"], "region": vm["region"], "plan": vm["plan"]}
+    if run.get("stop"):
+        raise Stopped()
 
 
 async def _with_teardown(run_id: str, agen):
@@ -358,7 +341,7 @@ async def _with_teardown(run_id: str, agen):
 @app.on_event("startup")
 async def _start_watchdog():
     if disposable.ENABLED:
-        asyncio.create_task(disposable.watchdog())
+        asyncio.create_task(disposable.watchdog())   # also boots the first standby VM
 
 
 @app.post("/api/ask")
@@ -900,7 +883,14 @@ async def stop_run(run_id: str):
 @app.get("/api/config")
 async def config():
     return {"auth": db.ENABLED and bool(db.ANON_KEY), "supabase_url": db.URL, "supabase_anon_key": db.ANON_KEY,
-            "fresh_vm": disposable.ENABLED, "fresh_vm_max_age_min": disposable.MAX_AGE_MIN}
+            "fresh_vm": disposable.ENABLED, "fresh_vm_max_age_min": disposable.MAX_AGE_MIN,
+            "fresh_vm_pool": {k: disposable.STATUS[k] for k in ("ready", "booting", "claimed")}}
+
+
+@app.get("/api/vm-pool")
+async def vm_pool():
+    """Warm-pool status for the UI and for debugging the fresh-VM tier."""
+    return {"enabled": disposable.ENABLED, "pool_size": disposable.POOL_SIZE, **disposable.STATUS}
 
 
 @app.get("/api/me")
