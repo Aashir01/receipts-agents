@@ -133,9 +133,31 @@ def _detect_blocked_actions(stderr: str) -> list[str]:
     return findings
 
 
+_digests: dict[str, str] = {}
+
+
+async def image_digest(image: str) -> str:
+    """The exact image a job ran on: its registry digest when pushed to a registry, else its local ID."""
+    if image in _digests:
+        return _digests[image]
+    rc, out, _ = await _docker("image", "inspect", "--format", "{{json .RepoDigests}}|{{.Id}}", image)
+    if rc != 0:
+        return "unknown"
+    repo, _, iid = out.strip().partition("|")
+    try:
+        digests = json.loads(repo or "[]")
+    except json.JSONDecodeError:
+        digests = []
+    pinned = next((d for d in digests if "@sha256:" in d and image.split("@")[0].split(":")[0] in d), None)
+    _digests[image] = pinned or (digests[0] if digests else iid)
+    return _digests[image]
+
+
 @app.get("/health")
 async def health():
-    return {"ok": True, "runtime": DOCKER_RUNTIME, "image": SANDBOX_IMAGE}
+    images = {name: {"ref": ref, "digest": await image_digest(ref)}
+              for name, ref in (("sandbox", SANDBOX_IMAGE), ("browser", BROWSER_IMAGE), ("egress", EGRESS_IMAGE))}
+    return {"ok": True, "runtime": DOCKER_RUNTIME, "image": SANDBOX_IMAGE, "images": images}
 
 
 @app.post("/kill/{job_id}")
@@ -287,7 +309,7 @@ async def run(req: RunRequest, x_runner_token: str | None = Header(default=None)
                 "stdout": _truncate(stdout),
                 "stderr": _truncate(stderr),
                 "outputs": outputs,
-                "limits": limits,
+                "limits": {**limits, "image": await image_digest(SANDBOX_IMAGE)},
                 "events": events,
             }
         finally:
@@ -425,7 +447,8 @@ async def browse(req: BrowseRequest, x_runner_token: str | None = Header(default
                 "job_id": job_id, "status": status, "exit_code": exit_code, "duration_s": duration,
                 "stdout": _truncate(out_b.decode(errors="replace")), "stderr": _truncate(err_b.decode(errors="replace")),
                 "result": result, "outputs": shots, "events": events, "infra_error": infra_error,
-                "limits": {"runtime": DOCKER_RUNTIME, "network": f"private, egress via allowlist proxy ({', '.join(domains)})",
+                "limits": {"runtime": DOCKER_RUNTIME, "image": await image_digest(BROWSER_IMAGE),
+                           "network": f"private, egress via allowlist proxy ({', '.join(domains)})",
                            "memory_mb": 1024, "cpus": 1, "pids_limit": 256, "timeout_s": req.timeout_s,
                            "root_fs": "read-only", "user": f"uid {SANDBOX_UID} (non-root)",
                            "capabilities": "all dropped", "secrets_in_sandbox": 0, "allow_domains": domains},
@@ -748,6 +771,40 @@ RestartSec=3
 
 [Install]
 WantedBy=multi-user.target
+AGENTRUSH_EOF
+
+cat > /opt/agentrush-runner/push-images.sh <<'AGENTRUSH_EOF'
+#!/usr/bin/env bash
+# Push the sandbox, browser and egress images to a Vultr Container Registry and pin the runner to
+# their exact digests. Run on the executor VM after `docker login <registry host>`.
+# The script logs out again at the end, so the executor keeps holding no secrets.
+# Usage: bash /opt/agentrush-runner/push-images.sh atl.vultrcr.com/countersign
+set -euo pipefail
+REG="${1:?usage: push-images.sh <registry, for example atl.vultrcr.com/countersign>}"
+HOST="${REG%%/*}"
+TAG="$(date -u +%Y%m%d-%H%M)"
+ENVF=/etc/agentrush/runner.env
+declare -A VAR=([agentrush-sandbox]=SANDBOX_IMAGE [agentrush-browser]=BROWSER_IMAGE [agentrush-egress]=EGRESS_IMAGE)
+for img in agentrush-sandbox agentrush-browser agentrush-egress; do
+  echo "==> $img"
+  docker tag "$img:latest" "$REG/$img:$TAG"
+  docker push -q "$REG/$img:$TAG" >/dev/null
+  DIGEST="$(docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$REG/$img:$TAG" | grep "^$REG/$img@sha256:" | head -1)"
+  if [ -z "$DIGEST" ]; then echo "ERROR: no digest for $img" >&2; exit 1; fi
+  if grep -q "^${VAR[$img]}=" "$ENVF"; then
+    sed -i "s#^${VAR[$img]}=.*#${VAR[$img]}=$DIGEST#" "$ENVF"
+  else
+    echo "${VAR[$img]}=$DIGEST" >> "$ENVF"
+  fi
+  echo "    pinned $DIGEST"
+done
+docker logout "$HOST" >/dev/null 2>&1 || true
+rm -f /root/.docker/config.json
+systemctl restart agentrush-runner
+sleep 3
+echo
+echo "Runner now uses images pinned by digest. Registry credentials removed from this VM."
+grep -E '^(SANDBOX|BROWSER|EGRESS)_IMAGE=' "$ENVF"
 AGENTRUSH_EOF
 
 echo "==> Creating Python environment"

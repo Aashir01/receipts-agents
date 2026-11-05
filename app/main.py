@@ -17,6 +17,7 @@ import re
 import secrets
 import time
 import uuid
+from datetime import datetime, timezone
 from collections import defaultdict, deque
 from pathlib import Path
 
@@ -26,6 +27,7 @@ from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+import archive
 import db
 import disposable
 import guard
@@ -1119,6 +1121,7 @@ async def stop_run(run_id: str):
 @app.get("/api/config")
 async def config():
     return {"auth": db.ENABLED and bool(db.ANON_KEY), "supabase_url": db.URL, "supabase_anon_key": db.ANON_KEY,
+            "archive": archive.ENABLED,
             "fresh_vm": disposable.ENABLED, "fresh_vm_max_age_min": disposable.MAX_AGE_MIN,
             "fresh_vm_pool": {k: disposable.STATUS[k] for k in ("ready", "booting", "claimed")}}
 
@@ -1224,8 +1227,13 @@ async def audit_csv(request: Request):
         w.writerow([r["run_id"], r["created_at"], r["kind"], r["question"], r["status"], r["verified"], r["sandbox_jobs"],
                     r["blocked_actions"], ap.get("approve", 0), ap.get("reject", 0), ap.get("timeout", 0),
                     "; ".join(r["machines"]), r["part_of_mission"] or "", r["total_s"]])
-    return Response(content=buf.getvalue(), media_type="text/csv",
-                    headers={"Content-Disposition": 'attachment; filename="countersign-audit-trail.csv"'})
+    data_bytes = buf.getvalue().encode()
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    key = await archive.archive_export(f"audit-exports/{user['id']}/{stamp}.csv", data_bytes, "text/csv")
+    headers = {"Content-Disposition": 'attachment; filename="countersign-audit-trail.csv"'}
+    if key:
+        headers["X-Archived-Key"] = key
+    return Response(content=data_bytes, media_type="text/csv", headers=headers)
 
 
 async def _run_bundle(run: dict) -> dict:
@@ -1370,6 +1378,9 @@ async def replay(receipt_id: str, request: Request):
               {"item": "input file", "original": rc["input_sha256"], "replay": ds["sha256"]},
               {"item": "printed output", "original": rc.get("stdout_sha256"),
                "replay": store.sha256(result.get("stdout", "").encode())}]
+    if (rc.get("limits") or {}).get("image"):          # which exact sandbox image ran
+        checks.append({"item": "sandbox image", "original": rc["limits"]["image"],
+                       "replay": (result.get("limits") or {}).get("image")})
     for name in sorted(set(original) | set(fresh)):
         checks.append({"item": name, "original": original.get(name), "replay": fresh.get(name)})
     for c in checks:
@@ -1382,6 +1393,51 @@ async def replay(receipt_id: str, request: Request):
     return {"matched": matched, "checks": checks, "replay_receipt_id": new_id,
             "receipt": receipt(rc["code"], result, rc.get("model")),
             "events": result["events"], "limits": result["limits"]}
+
+
+@app.get("/api/receipts/{receipt_id}/archive")
+async def receipt_archive(receipt_id: str):
+    """Tamper check: compare the database receipt with its copy on Vultr Object Storage."""
+    if not archive.ENABLED:
+        raise HTTPException(404, "The Object Storage archive is not configured on this server")
+    row = await db.one("receipts", {"id": f"eq.{receipt_id}",
+                                    "select": "id,code_sha256,stdout_sha256,exit_code,executed_on,outputs"})
+    if not row:
+        raise HTTPException(404, "Receipt not found")
+    return await archive.check(receipt_id, row)
+
+
+@app.get("/api/platform")
+async def platform():
+    """Platform safeguards, read live: backups, firewalls, fresh-VM pool, pinned images, archive."""
+    out: dict = {"archive": archive.status(), "pool": {"enabled": disposable.ENABLED, **disposable.STATUS}}
+    try:
+        r = await _runner.get(f"{RUNNER_URL}/health", timeout=5)
+        out["images"] = r.json().get("images") if r.status_code == 200 else None
+    except Exception:  # noqa: BLE001
+        out["images"] = None
+    out["vms"] = []
+    if disposable.ENABLED:
+        try:
+            for label in (os.environ.get("APP_VM_LABEL", "agentrush-app"), disposable.TEMPLATE_LABEL):
+                rv = await disposable._req("GET", "/instances", params={"label": label, "per_page": 10})
+                inst = next((i for i in (rv.json().get("instances", []) if rv.status_code == 200 else [])
+                             if i.get("label") == label), None)
+                if not inst:
+                    out["vms"].append({"label": label, "found": False})
+                    continue
+                vm = {"label": label, "found": True, "region": inst.get("region"), "plan": inst.get("plan"),
+                      "firewall": bool(inst.get("firewall_group_id")), "backups": None, "next_backup": None}
+                rb = await disposable._req("GET", f"/instances/{inst['id']}/backup-schedule")
+                if rb.status_code == 200:
+                    bs = rb.json().get("backup_schedule", {})
+                    vm["backups"] = bool(bs.get("enabled"))
+                    vm["backup_type"] = bs.get("type")
+                    vm["next_backup"] = bs.get("next_scheduled_time_utc")
+                out["vms"].append(vm)
+        except Exception as e:  # noqa: BLE001
+            out["vms_error"] = type(e).__name__
+    return out
 
 
 # ---------- static UI ----------

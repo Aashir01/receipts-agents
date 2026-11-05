@@ -354,6 +354,7 @@
   .aevents li { padding: 7px 0; border-bottom: 1px dashed var(--line); display: flex; gap: 10px; }
   .aevents .k { font: 700 12px/1.6 var(--mono); min-width: 130px; }
   .aevents .k.blocked, .aevents .k.killed { color: var(--stamp); }
+  .aevents .k.on { color: var(--pass); }
 
   /* ---------- Countersign theme layer ---------- */
   .drop, .sample, .chip, .btn, .ask textarea, .col, .step pre, .answer pre, .charts figure, .approval,
@@ -955,6 +956,7 @@ async function loadAudit() {
     const b = el("button", "btn", "Sign in"); b.type = "button"; b.onclick = () => $("#signin").showModal(); box.append(b); return;
   }
   box.replaceChildren(el("p", "muted", "Loading the audit trail…"));
+  const safeguards = el("div"); loadPlatform(safeguards);
   const res = await api("/api/audit"); const d = await res.json().catch(() => ({}));
   if (!res.ok) { box.replaceChildren(el("p", "error", d.detail || "Could not load the audit trail")); return; }
   const s = d.summary, ap = s.approvals || {};
@@ -963,8 +965,10 @@ async function loadAudit() {
    ["Approved by a human", ap.approve || 0], ["Rejected by a human", ap.reject || 0], ["Fresh VMs", s.fresh_vms], ["Verified runs", s.verified]]
     .forEach(([k, v]) => { const t = el("div"); t.append(el("b", null, String(v)), el("span", null, k)); tiles.append(t); });
   const exp = el("button", "btn ghost", "Export CSV"); exp.type = "button";
+  const expNote = el("span", "muted");
   exp.onclick = async () => { const r = await api("/api/audit.csv"); const blob = await r.blob();
-    const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "countersign-audit-trail.csv"; a.click(); URL.revokeObjectURL(a.href); };
+    const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "countersign-audit-trail.csv"; a.click(); URL.revokeObjectURL(a.href);
+    const k = r.headers.get("X-Archived-Key"); expNote.textContent = k ? `A copy of this export was archived on Vultr Object Storage (${k}).` : ""; };
   const wrap = el("div", "atable"); const tb = el("table"); const head = el("tr");
   ["When", "Type", "Question", "Status", "Checked", "Jobs", "Blocked", "Human decisions", "Machine"].forEach(h => head.append(el("th", null, h)));
   const thead = el("thead"); thead.append(head); const tbody = el("tbody"); tb.append(thead, tbody); wrap.append(tb);
@@ -987,8 +991,35 @@ async function loadAudit() {
   const ev = el("ul", "aevents");
   if (!d.events.length) ev.append(el("li", "muted", "No blocked actions or human decisions yet."));
   d.events.forEach(e => { const li = el("li"); li.append(el("span", `k ${e.kind}`, e.kind), el("span", null, e.detail)); ev.append(li); });
-  const row = el("div", "row"); row.append(exp);
-  box.replaceChildren(tiles, row, el("div", "muted", " "), wrap, evh, ev);
+  const row = el("div", "row"); row.append(exp, expNote);
+  box.replaceChildren(safeguards, tiles, row, el("div", "muted", " "), wrap, evh, ev);
+}
+
+async function loadPlatform(box) {
+  box.replaceChildren(el("p", "muted", "Reading platform safeguards from Vultr…"));
+  let d; try { d = await (await fetch("/api/platform")).json(); } catch { box.replaceChildren(); return; }
+  const rows = [];
+  const add = (name, ok, detail) => rows.push([name, ok, detail]);
+  const ar = d.archive || {};
+  add("Receipt archive on Vultr Object Storage", ar.enabled && !ar.last_error,
+      ar.enabled ? `bucket ${ar.bucket}; ${ar.archived} receipts archived since the last restart${ar.last_error ? "; last error: " + ar.last_error : ""}` : "not configured");
+  for (const [name, im] of Object.entries(d.images || {})) {
+    const pinned = (im.digest || "").includes("@sha256:");
+    add(`${name[0].toUpperCase() + name.slice(1)} image`, pinned,
+        pinned ? `pinned from Vultr Container Registry: ${im.digest.split("@")[0]}@${im.digest.split("@")[1].slice(0, 19)}…` : `local build ${String(im.digest).slice(0, 19)}…, not pinned to a registry yet`);
+  }
+  for (const vm of d.vms || []) {
+    if (!vm.found) { add(`VM ${vm.label}`, false, "not found through the Vultr API"); continue; }
+    if (/exec/.test(vm.label) && !vm.backups) add(`Automatic backups: ${vm.label}`, true, "not needed: the executor holds no data or secrets and can be rebuilt from its snapshot");
+    else add(`Automatic backups: ${vm.label}`, vm.backups === true, vm.backups ? `${vm.backup_type || "on"}${vm.next_backup ? ", next " + new Date(vm.next_backup.replace(" ", "T") + "Z").toLocaleString() : ""}` : "off");
+    add(`Firewall group: ${vm.label}`, vm.firewall, vm.firewall ? "attached" : "none attached");
+  }
+  const pool = d.pool || {};
+  if (pool.enabled) add("Fresh VM pool", pool.ready > 0, `${pool.ready} ready, ${pool.booting} restoring, ${pool.claimed} in use`);
+  const h = el("h3", null, "Platform safeguards, live from Vultr"); h.style.cssText = "margin: 4px 0 8px; font: 700 17px var(--display)";
+  const ul = el("ul", "aevents");
+  rows.forEach(([n, ok, det]) => { const li = el("li"); li.append(el("span", `k ${ok ? "on" : "blocked"}`, ok ? "ON" : "CHECK"), el("span", null, `${n}: ${det}`)); ul.append(li); });
+  box.replaceChildren(h, ul); box.style.marginBottom = "16px";
 }
 
 let nested = false;
@@ -1313,6 +1344,11 @@ function handle(ev, tl, steps) {
       const b = el("button", "btn ghost", "Re-run this receipt"); b.type = "button";
       b.title = "Run the exact same code on the exact same file in a fresh sandbox and compare hashes";
       b.onclick = () => replay(ev.receipt_id, li, b); acts.append(b);
+      if (appConfig.archive) {
+        const c = el("button", "btn ghost", "Check the archived copy"); c.type = "button";
+        c.title = "Compare this receipt with its independent copy on Vultr Object Storage";
+        c.onclick = () => checkArchive(ev.receipt_id, li, c); acts.append(c);
+      }
     }
     if (currentRunId && appConfig.auth && !sharedMode) {
       const b = el("button", "btn ghost", "Share this run"); b.type = "button";
@@ -1377,6 +1413,7 @@ function printSlip({ title, receipt, events, limits, note, selfHealed, stamp }) 
     s.append(line("user", limits.user.replace(" (non-root)", " non-root")));
     s.append(line("secrets inside", String(limits.secrets_in_sandbox)));
     if (limits.machine) s.append(line("machine", limits.machine));
+    if (limits.image) s.append(line("image", limits.image.includes("@sha256:") ? "pinned " + limits.image.split("@")[1].slice(0, 19) + "…" : limits.image.slice(0, 19) + "…"));
   }
   const pf = receipt.preflight;
   if (pf) {
@@ -1434,6 +1471,28 @@ async function replay(rid, li, btn) {
   } catch (e) {
     li.append(el("p", "error", `Replay failed: ${e.message}`)); btn.textContent = "Re-run this receipt";
   } finally { btn.disabled = false; }
+}
+
+async function checkArchive(rid, li, btn) {
+  btn.disabled = true; btn.textContent = "Checking the archive…";
+  try {
+    const res = await fetch(`/api/receipts/${rid}/archive`); const d = await res.json();
+    if (!res.ok) throw new Error(d.detail || `HTTP ${res.status}`);
+    const box = el("div", "replay " + (d.matches ? "ok" : "no"));
+    box.append(el("h5", null, !d.archived ? "No archived copy found for this receipt yet"
+      : d.matches ? "Archived copy matches: the database receipt has not been changed"
+      : "Archived copy differs from the database: this receipt may have been altered"));
+    if (d.archived) {
+      const ul = el("ul", "checks");
+      d.checks.forEach(c => ul.append(el("li", c.match ? "ok" : "no", `${c.item}: ${c.match ? "same in both" : "different"}`)));
+      if (!d.record_intact) ul.append(el("li", "no", "archived record: its own hash does not match"));
+      box.append(ul);
+      const a = el("a", "dl", `Open the archived receipt (Vultr Object Storage, ${d.bucket})`); a.href = d.url; a.target = "_blank"; a.rel = "noopener";
+      box.append(a);
+    }
+    li.append(box); btn.textContent = "Check again";
+  } catch (e) { li.append(el("p", "error", `Archive check failed: ${e.message}`)); btn.textContent = "Check the archived copy"; }
+  finally { btn.disabled = false; }
 }
 
 async function shareRun(id, li, btn) {

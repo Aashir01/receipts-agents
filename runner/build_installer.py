@@ -14,6 +14,7 @@ FILES = {
     "/opt/agentrush-runner/egress/proxy.py": HERE / "egress" / "proxy.py",
     "/opt/agentrush-runner/egress/Dockerfile": HERE / "egress" / "Dockerfile",
     "/etc/systemd/system/agentrush-runner.service": HERE / "agentrush-runner.service",
+    "/opt/agentrush-runner/push-images.sh": HERE / "push-images.sh",
 }
 
 

@@ -1,5 +1,6 @@
 """Persistence for datasets, runs, the live event log and receipts (Supabase)."""
 
+import asyncio
 import base64
 import copy
 import hashlib
@@ -7,6 +8,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
+import archive
 import db
 
 
@@ -64,13 +66,14 @@ async def save_receipt(*, kind: str, code: str, result: dict, model: str | None,
                        executed_on: str = "executor-vm") -> tuple[str, list[dict]]:
     """Store a sandbox execution and its output files. Returns (receipt_id, outputs with sha/url)."""
     rid = str(uuid.uuid4())
-    outputs = []
+    outputs, raw_files = [], []
     for o in result.get("outputs", []):
         raw = base64.b64decode(o["content_b64"])
         path = f"{rid}/{o['name']}"
         await db.upload("outputs", path, raw, mime_for(o["name"]))
         outputs.append({"name": o["name"], "size": o["size"], "sha256": sha256(raw), "storage_path": path})
-    await db.insert("receipts", {
+        raw_files.append((o["name"], raw, mime_for(o["name"])))
+    row = {
         "id": rid, "run_id": run_id, "dataset_id": dataset["id"] if dataset else None, "kind": kind,
         "attempt": attempt, "job_id": result["job_id"], "model": model, "code": code,
         "code_sha256": sha256(code.encode()), "input_sha256": dataset["sha256"] if dataset else None,
@@ -79,7 +82,13 @@ async def save_receipt(*, kind: str, code: str, result: dict, model: str | None,
         "preflight": preflight, "stdout": result.get("stdout", "")[:20000],
         "stdout_sha256": sha256(result.get("stdout", "").encode()),
         "stderr": result.get("stderr", "")[:20000], "executed_on": result.get("executed_on") or executed_on,
-    })
+    }
+    await db.insert("receipts", row)
+    # an independent copy on Vultr Object Storage, for tamper-evident checks (never blocks the run)
+    record = {k: v for k, v in row.items() if k not in ("id", "stderr")}
+    record.update({"receipt_id": rid, "archived_at": now_iso(),
+                   "outputs": [{k: o[k] for k in ("name", "size", "sha256")} for o in outputs]})
+    asyncio.get_running_loop().create_task(archive.archive_receipt(record, raw_files))
     return rid, outputs
 
 

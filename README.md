@@ -152,6 +152,9 @@ Any finished run (analysis or web research) can be downloaded as a PDF: question
 - **Vultr Serverless Inference**: all LLM calls (OpenAI-compatible API at `api.vultrinference.com/v1`), main model `minimax-m3.1-flash` with automatic fallback to `deepseek-v4.1-flash-1017`. Models were chosen by benchmarking six candidates on generation and repair tasks.
 - **Vultr VPC**: private network between the two VMs; the runner is unreachable from the internet.
 - **Vultr Firewall**: firewall groups on both instances.
+- **Vultr Object Storage**: every receipt is also written, with its hashes in the object metadata, to an S3-compatible bucket. **Check the archived copy** compares the database receipt with the archive, so an edited receipt is caught; audit-trail CSV exports are archived too.
+- **Vultr Container Registry**: `runner/push-images.sh` pushes the sandbox, browser and proxy images and pins the runner to their digests, then removes the registry login so the executor keeps holding no secrets. Every receipt records the exact image digest, and Replay checks it.
+- **Vultr Automatic Backups**: daily backups of the app server (database and keys); the Audit trail's **Platform safeguards** panel reads backups, firewall groups, the fresh-VM pool, pinned images and the archive live from the Vultr API.
 - **Vultr API + Snapshots**: fresh-VM mode keeps a warm pool of snapshot-restored Cloud Compute instances and destroys each one after a single run.
 - **Vultr Marketplace: Coolify**: Git-based deploys, Traefik reverse proxy and Let's Encrypt TLS on the app server.
 
@@ -164,6 +167,7 @@ app/          Web app + agent (FastAPI, single-page UI)
   missions.py Mission templates, lead agent planning and guardrails, reporter
   research.py Browser prompts, action guard, evidence check
   report.py   Fixed sandbox script that lays out the PDF report
+  archive.py  Tamper-evident receipt archive on Vultr Object Storage
   disposable.py Fresh-VM tier: warm pool, claim, destroy, watchdog (Vultr API)
   llm.py      Vultr Serverless Inference client with fallback
   prompts.py  Plan / code / fix / explain prompts and the fixed profiling script
