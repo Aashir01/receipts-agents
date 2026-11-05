@@ -1,0 +1,81 @@
+expense_id,employee,department,date,category,merchant,amount_usd,receipt_attached,description
+EXP-5011,Maria Garcia,Marketing,2026-07-31,Taxi,City Cabs,12.39,yes,taxi for client work
+EXP-5069,Grace Okafor,Finance,2026-07-29,Software,CloudTools,82.96,yes,software for client work
+EXP-5063,Elena Rossi,Marketing,2026-07-13,Software,CloudTools,96.16,yes,software for client work
+EXP-5052,Bilal Sheikh,Engineering,2026-09-04,Flight,SkyWays,272.28,yes,flight for client work
+EXP-5032,Omar Farooq,Operations,2026-07-06,Office supplies,PaperCo,41.30,yes,office supplies for client work
+EXP-5080,Ayesha Khan,Sales,2026-07-28,Taxi,City Cabs,38.00,no,airport ride
+EXP-5048,Omar Farooq,Operations,2026-08-24,Hotel,Harbor Inn,178.65,yes,hotel for client work
+EXP-5004,Bilal Sheikh,Engineering,2026-07-10,Flight,SkyWays,384.89,yes,flight for client work
+EXP-5053,Grace Okafor,Finance,2026-09-07,Taxi,City Cabs,41.77,yes,taxi for client work
+EXP-5033,Ayesha Khan,Sales,2026-07-09,Software,CloudTools,59.48,yes,software for client work
+EXP-5059,Maria Garcia,Marketing,2026-09-25,Taxi,City Cabs,37.03,yes,taxi for client work
+EXP-5062,Kenji Tanaka,Engineering,2026-07-08,Office supplies,PaperCo,25.29,yes,office supplies for client work
+EXP-5002,Tom Clark,Sales,2026-07-06,Office supplies,PaperCo,37.11,yes,office supplies for client work
+EXP-5060,Bilal Sheikh,Engineering,2026-07-02,Hotel,Harbor Inn,166.98,yes,hotel for client work
+EXP-5047,Elena Rossi,Marketing,2026-08-20,Taxi,City Cabs,39.48,yes,taxi for client work
+EXP-5056,Omar Farooq,Operations,2026-09-16,Office supplies,PaperCo,28.67,yes,office supplies for client work
+EXP-5049,Ayesha Khan,Sales,2026-08-26,Meals,Cafe Milano,67.82,yes,meals for client work
+EXP-5013,Grace Okafor,Finance,2026-08-06,Meals,Cafe Milano,22.71,yes,meals for client work
+EXP-5023,Elena Rossi,Marketing,2026-09-07,Taxi,City Cabs,28.02,yes,taxi for client work
+EXP-5018,Tom Clark,Sales,2026-08-21,Hotel,Harbor Inn,236.48,yes,hotel for client work
+EXP-5036,Bilal Sheikh,Engineering,2026-07-20,Hotel,Harbor Inn,167.82,yes,hotel for client work
+EXP-5034,Tom Clark,Sales,2026-07-13,Flight,SkyWays,471.48,yes,flight for client work
+EXP-5057,Ayesha Khan,Sales,2026-09-21,Software,CloudTools,25.77,yes,software for client work
+EXP-5078,Kenji Tanaka,Engineering,2026-09-15,Office supplies,TechMart,249.00,yes,laptop stand part 2
+EXP-5064,Omar Farooq,Operations,2026-07-14,Flight,SkyWays,513.54,yes,flight for client work
+EXP-5020,Bilal Sheikh,Engineering,2026-08-27,Office supplies,PaperCo,40.01,yes,office supplies for client work
+EXP-5008,Omar Farooq,Operations,2026-07-22,Office supplies,PaperCo,34.62,yes,office supplies for client work
+EXP-5061,Grace Okafor,Finance,2026-07-06,Meals,Cafe Milano,22.53,yes,meals for client work
+EXP-5044,Bilal Sheikh,Engineering,2026-08-11,Office supplies,PaperCo,11.65,yes,office supplies for client work
+EXP-5021,Grace Okafor,Finance,2026-08-31,Software,CloudTools,32.44,yes,software for client work
+EXP-5043,Maria Garcia,Marketing,2026-08-10,Meals,Cafe Milano,33.03,yes,meals for client work
+EXP-5046,Kenji Tanaka,Engineering,2026-08-17,Flight,SkyWays,356.18,yes,flight for client work
+EXP-5067,Maria Garcia,Marketing,2026-07-23,Meals,Cafe Milano,23.25,yes,meals for client work
+EXP-5031,Elena Rossi,Marketing,2026-07-03,Meals,Cafe Milano,44.99,yes,meals for client work
+EXP-5009,Ayesha Khan,Sales,2026-07-27,Software,CloudTools,69.76,yes,software for client work
+EXP-5030,Kenji Tanaka,Engineering,2026-09-28,Hotel,Harbor Inn,224.24,yes,hotel for client work
+EXP-5041,Ayesha Khan,Sales,2026-08-03,Taxi,City Cabs,20.35,yes,taxi for client work
+EXP-5024,Omar Farooq,Operations,2026-09-08,Hotel,Harbor Inn,145.96,yes,hotel for client work
+EXP-5071,Tom Clark,Sales,2026-08-14,Meals,The Grill House,186.40,yes,team dinner
+EXP-5016,Omar Farooq,Operations,2026-08-17,Flight,SkyWays,198.43,yes,flight for client work
+EXP-5038,Kenji Tanaka,Engineering,2026-07-24,Office supplies,PaperCo,59.78,yes,office supplies for client work
+EXP-5070,Kenji Tanaka,Engineering,2026-08-03,Flight,SkyWays,258.18,yes,flight for client work
+EXP-5006,Kenji Tanaka,Engineering,2026-07-16,Hotel,Harbor Inn,198.74,yes,hotel for client work
+EXP-5045,Grace Okafor,Finance,2026-08-14,Software,CloudTools,80.54,yes,software for client work
+EXP-5005,Grace Okafor,Finance,2026-07-13,Taxi,City Cabs,27.28,yes,taxi for client work
+EXP-5076,Omar Farooq,Operations,2026-09-10,Office supplies,TechMart,480.00,no,monitor
+EXP-5019,Maria Garcia,Marketing,2026-08-24,Meals,Cafe Milano,52.00,yes,meals for client work
+EXP-5022,Kenji Tanaka,Engineering,2026-09-02,Flight,SkyWays,186.60,yes,flight for client work
+EXP-5040,Omar Farooq,Operations,2026-07-30,Flight,SkyWays,491.44,yes,flight for client work
+EXP-5073,Maria Garcia,Marketing,2026-08-22,Hotel,Grand Palace Hotel,389.00,yes,conference stay
+EXP-5068,Bilal Sheikh,Engineering,2026-07-27,Office supplies,PaperCo,11.11,yes,office supplies for client work
+EXP-5075,Elena Rossi,Marketing,2026-07-19,Meals,Wine & Dine Bar,58.20,yes,"drinks with prospect, wine"
+EXP-5029,Grace Okafor,Finance,2026-09-23,Taxi,City Cabs,24.86,yes,taxi for client work
+EXP-5014,Kenji Tanaka,Engineering,2026-08-10,Office supplies,PaperCo,50.10,yes,office supplies for client work
+EXP-5010,Tom Clark,Sales,2026-07-28,Flight,SkyWays,528.91,yes,flight for client work
+EXP-5065,Ayesha Khan,Sales,2026-07-17,Taxi,City Cabs,13.25,yes,taxi for client work
+EXP-5007,Elena Rossi,Marketing,2026-07-20,Meals,Cafe Milano,27.60,yes,meals for client work
+EXP-5037,Grace Okafor,Finance,2026-07-21,Meals,Cafe Milano,69.88,yes,meals for client work
+EXP-5042,Tom Clark,Sales,2026-08-05,Hotel,Harbor Inn,162.97,yes,hotel for client work
+EXP-5077,Kenji Tanaka,Engineering,2026-09-15,Office supplies,TechMart,249.00,yes,laptop stand part 1
+EXP-5055,Elena Rossi,Marketing,2026-09-14,Meals,Cafe Milano,68.98,yes,meals for client work
+EXP-5026,Tom Clark,Sales,2026-09-14,Office supplies,PaperCo,20.58,yes,office supplies for client work
+EXP-5012,Bilal Sheikh,Engineering,2026-08-03,Hotel,Harbor Inn,170.34,yes,hotel for client work
+EXP-5027,Maria Garcia,Marketing,2026-09-17,Software,CloudTools,22.38,yes,software for client work
+EXP-5003,Maria Garcia,Marketing,2026-07-07,Software,CloudTools,93.01,yes,software for client work
+EXP-5039,Elena Rossi,Marketing,2026-07-27,Software,CloudTools,86.38,yes,software for client work
+EXP-5035,Maria Garcia,Marketing,2026-07-15,Taxi,City Cabs,25.46,yes,taxi for client work
+EXP-5001,Ayesha Khan,Sales,2026-07-01,Meals,Cafe Milano,41.52,yes,meals for client work
+EXP-5028,Bilal Sheikh,Engineering,2026-09-21,Flight,SkyWays,384.13,yes,flight for client work
+EXP-5074,Bilal Sheikh,Engineering,2026-09-06,Software,CloudTools,64.00,yes,weekend tool purchase
+EXP-5051,Maria Garcia,Marketing,2026-09-01,Software,CloudTools,20.04,yes,software for client work
+EXP-5015,Elena Rossi,Marketing,2026-08-12,Software,CloudTools,74.78,yes,software for client work
+EXP-5050,Tom Clark,Sales,2026-08-31,Office supplies,PaperCo,52.06,yes,office supplies for client work
+EXP-5054,Kenji Tanaka,Engineering,2026-09-10,Hotel,Harbor Inn,187.00,yes,hotel for client work
+EXP-5017,Ayesha Khan,Sales,2026-08-18,Taxi,City Cabs,44.36,yes,taxi for client work
+EXP-5079,Grace Okafor,Finance,2026-08-03,Flight,SkyWays,1840.00,yes,business class upgrade
+EXP-5066,Tom Clark,Sales,2026-07-20,Hotel,Harbor Inn,164.64,yes,hotel for client work
+EXP-5058,Tom Clark,Sales,2026-09-22,Flight,SkyWays,456.96,yes,flight for client work
+EXP-5025,Ayesha Khan,Sales,2026-09-11,Meals,Cafe Milano,27.89,yes,meals for client work
+EXP-5072,Tom Clark,Sales,2026-08-14,Meals,The Grill House,186.40,yes,team dinner

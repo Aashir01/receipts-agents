@@ -1,0 +1,49 @@
+deal_id,account,owner,stage,amount_usd,created_date,last_activity_date,expected_close
+D-2200,Acme Logistics,Ayesha Khan,Prospecting,18000,2026-04-01,2026-09-09,2026-10-12
+D-2201,Brightside Health,Tom Clark,Closed Lost,18000,2026-04-05,2026-10-16,2026-10-23
+D-2202,Cobalt Retail,Lucas Silva,Closed Won,75000,2026-04-09,2026-10-26,2026-11-03
+D-2203,Delta Freight,Hina Iqbal,Negotiation,52000,2026-04-13,2026-10-29,2026-11-14
+D-2204,Evergreen Schools,Ayesha Khan,Proposal,24000,2026-04-17,2026-10-19,2026-11-25
+D-2205,Falcon Media,Tom Clark,Qualified,18000,2026-04-21,2026-10-15,2026-12-06
+D-2206,Globex Foods,Lucas Silva,Prospecting,8000,2026-04-25,2026-10-23,2026-12-17
+D-2207,Helios Energy,Hina Iqbal,Closed Lost,52000,2026-04-29,2026-08-24,2026-12-28
+D-2208,Iris Legal,Ayesha Khan,Closed Won,75000,2026-05-03,2026-10-28,2027-01-08
+D-2209,Juniper Labs,Tom Clark,Negotiation,52000,2026-05-07,2026-11-01,2026-10-21
+D-2210,Keystone Bank,Lucas Silva,Proposal,36000,2026-05-11,2026-11-02,2026-11-01
+D-2211,Lotus Travel,Hina Iqbal,Qualified,24000,2026-05-15,2026-10-17,2026-11-12
+D-2212,Mosaic Studio,Ayesha Khan,Prospecting,24000,2026-05-19,2026-10-15,2026-11-23
+D-2213,Nimbus Air,Tom Clark,Closed Lost,18000,2026-05-23,2026-11-01,2026-12-04
+D-2214,Orion Games,Lucas Silva,Closed Won,75000,2026-05-27,2026-09-25,2026-12-15
+D-2215,Pioneer Farms,Hina Iqbal,Negotiation,24000,2026-05-31,2026-10-20,2026-12-26
+D-2216,Quantum Clinics,Ayesha Khan,Proposal,24000,2026-06-04,2026-10-22,2027-01-06
+D-2217,Redwood Realty,Tom Clark,Qualified,75000,2026-06-08,2026-11-02,2026-10-19
+D-2218,Summit Insurance,Lucas Silva,Prospecting,52000,2026-06-12,2026-10-30,2026-10-30
+D-2219,Terra Mining,Hina Iqbal,Closed Lost,18000,2026-06-16,2026-10-18,2026-11-10
+D-2220,Umbra Security,Ayesha Khan,Closed Won,24000,2026-06-20,2026-10-25,2026-11-21
+D-2221,Vertex Telecom,Tom Clark,Negotiation,24000,2026-06-24,2026-09-06,2026-12-02
+D-2222,Willow Hotels,Lucas Silva,Proposal,12500,2026-06-28,2026-11-03,2026-12-13
+D-2223,Xenon Motors,Hina Iqbal,Qualified,12500,2026-07-02,2026-10-15,2026-12-24
+D-2224,Yarrow Pharma,Ayesha Khan,Prospecting,12500,2026-07-06,2026-10-26,2027-01-04
+D-2225,Zephyr Apparel,Tom Clark,Closed Lost,52000,2026-07-10,2026-10-26,2026-10-17
+D-2226,Atlas Robotics,Lucas Silva,Closed Won,12500,2026-07-14,2026-10-27,2026-10-28
+D-2227,Beacon Credit,Hina Iqbal,Negotiation,8000,2026-07-18,2026-10-18,2026-11-08
+D-2228,Crescent Dental,Ayesha Khan,Proposal,24000,2026-07-22,2026-08-26,2026-11-19
+D-2229,Dune Outdoor,Tom Clark,Qualified,12500,2026-07-26,2026-11-03,2026-11-30
+D-2230,Acme Logistics,Lucas Silva,Prospecting,24000,2026-07-30,2026-10-17,2026-12-11
+D-2231,Brightside Health,Hina Iqbal,Closed Lost,75000,2026-08-03,2026-10-14,2026-12-22
+D-2232,Cobalt Retail,Ayesha Khan,Closed Won,8000,2026-08-07,2026-10-17,2027-01-02
+D-2233,Delta Freight,Tom Clark,Negotiation,75000,2026-08-11,2026-10-15,2026-10-15
+D-2234,Evergreen Schools,Lucas Silva,Proposal,75000,2026-08-15,2026-10-17,2026-10-26
+D-2235,Falcon Media,Hina Iqbal,Qualified,75000,2026-08-19,2026-08-19,2026-11-06
+D-2236,Globex Foods,Ayesha Khan,Prospecting,18000,2026-08-23,2026-10-24,2026-11-17
+D-2237,Helios Energy,Tom Clark,Closed Lost,8000,2026-08-27,2026-10-23,2026-11-28
+D-2238,Iris Legal,Lucas Silva,Closed Won,18000,2026-08-31,2026-11-03,2026-12-09
+D-2239,Juniper Labs,Hina Iqbal,Negotiation,52000,2026-09-04,2026-10-28,2026-12-20
+D-2240,Keystone Bank,Ayesha Khan,Proposal,52000,2026-09-08,2026-10-22,2026-12-31
+D-2241,Lotus Travel,Tom Clark,Qualified,12500,2026-09-12,2026-10-29,2026-10-13
+D-2242,Mosaic Studio,Lucas Silva,Prospecting,12500,2026-09-16,2026-09-19,2026-10-24
+D-2243,Nimbus Air,Hina Iqbal,Closed Lost,36000,2026-04-03,2026-10-24,2026-11-04
+D-2244,Orion Games,Ayesha Khan,Closed Won,75000,2026-04-07,2026-10-19,2026-11-15
+D-2245,Pioneer Farms,Tom Clark,Negotiation,18000,2026-04-11,2026-10-16,2026-11-26
+D-2246,Quantum Clinics,Lucas Silva,Proposal,24000,2026-04-15,2026-10-23,2026-12-07
+D-2247,Redwood Realty,Hina Iqbal,Qualified,18000,2026-04-19,2026-10-25,2026-12-18

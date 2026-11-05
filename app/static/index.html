@@ -314,7 +314,8 @@
   .mfile .lab small { color: var(--muted); font-size: 12.5px; }
   .mfile .got { font-size: 13px; color: var(--pass); font-weight: 600; word-break: break-all; }
   .mfile label.btn { display: inline-block; }
-  .mfile input[type=file] { position: absolute; width: 1px; height: 1px; opacity: 0; }
+  .mfile input[type=file], .cfiles input[type=file] { position: absolute; width: 1px; height: 1px; opacity: 0; }
+  .cfiles label.btn { display: inline-block; }
   #mgoal { width: 100%; min-height: 64px; margin-top: 4px; padding: 10px 12px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); font: inherit; resize: vertical; }
   .agent { list-style: none; margin: 0 0 18px; border: 1.5px solid var(--ink); background: var(--surface); }
   .agent > header { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 12px 14px; border-bottom: 1px dashed var(--line); }
@@ -330,6 +331,29 @@
   .planlist { margin: 8px 0 0; padding: 0; list-style: none; display: grid; gap: 6px; }
   .planlist li { display: flex; gap: 10px; align-items: baseline; font-size: 13.5px; }
   .planlist li span:last-child { color: var(--muted); }
+
+  .mcard.custom { border-style: dashed; border-color: var(--ink); }
+  .cfiles { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 10px 0; border-bottom: 1px dashed var(--line); }
+  .cfiles select { min-height: 44px; padding: 0 10px; border: 1.5px solid var(--ink); background: var(--surface); color: var(--ink); font: inherit; }
+  .fchip { display: inline-flex; gap: 6px; align-items: center; font-size: 13px; border: 1px solid var(--line); padding: 4px 8px; background: var(--surface); }
+  .fchip button { border: 0; background: none; cursor: pointer; color: var(--muted); font-size: 15px; }
+  .atiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 0; border: 1.5px solid var(--ink); margin: 8px 0 14px; }
+  .atiles div { padding: 12px 14px; border-right: 1px dashed var(--line); }
+  .atiles div:last-child { border-right: 0; }
+  .atiles b { display: block; font: 700 24px/1.1 var(--display); font-variant-numeric: tabular-nums; }
+  .atiles span { font-size: 12.5px; color: var(--muted); }
+  .atable { overflow-x: auto; border: 1.5px solid var(--ink); }
+  .atable table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  .atable th, .atable td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  .atable th { font-weight: 600; color: var(--muted); background: var(--panel); }
+  .atable td.q { white-space: normal; min-width: 240px; max-width: 420px; }
+  .atable tr.child td.q { padding-left: 26px; color: var(--muted); }
+  .atable tbody tr { cursor: pointer; }
+  .atable tbody tr:hover { background: var(--tint); }
+  .aevents { list-style: none; margin: 10px 0 0; padding: 0; font-size: 13px; }
+  .aevents li { padding: 7px 0; border-bottom: 1px dashed var(--line); display: flex; gap: 10px; }
+  .aevents .k { font: 700 12px/1.6 var(--mono); min-width: 130px; }
+  .aevents .k.blocked, .aevents .k.killed { color: var(--stamp); }
 
   /* ---------- Countersign theme layer ---------- */
   .drop, .sample, .chip, .btn, .ask textarea, .col, .step pre, .answer pre, .charts figure, .approval,
@@ -348,7 +372,8 @@
   .drop { border-color: var(--ink); border-width: 1.5px; }
   .drop:hover, .drop.over { background: var(--tint); border-color: var(--blue); }
   .ask textarea:focus, .field input:focus { box-shadow: 0 0 0 3px #1F3BFF26; }
-  .modes { background: transparent; padding: 0; gap: 0; border-bottom: 1.5px solid var(--ink); display: flex; width: 100%; }
+  .modes { background: transparent; padding: 0; gap: 0; border-bottom: 1.5px solid var(--ink); display: flex; width: 100%; overflow-x: auto; }
+  .modes button { white-space: nowrap; }
   .modes button { padding: 12px 18px; font-family: var(--display); font-size: 17px; font-weight: 600; color: var(--muted);
                   border-bottom: 4px solid transparent; margin-bottom: -1.5px; }
   .modes button[aria-selected="true"] { background: transparent; box-shadow: none; color: var(--ink); border-bottom-color: var(--blue); }
@@ -466,6 +491,7 @@
       <button type="button" role="tab" id="tab-missions" aria-selected="false" aria-controls="missionbox">Missions</button>
       <button type="button" role="tab" id="tab-analyze" aria-selected="true" aria-controls="askbox">Analyze a file</button>
       <button type="button" role="tab" id="tab-research" aria-selected="false" aria-controls="research">Research the web</button>
+      <button type="button" role="tab" id="tab-audit" aria-selected="false" aria-controls="auditbox">Audit trail</button>
     </div>
     <div class="where" id="where" hidden>
       <fieldset>
@@ -482,6 +508,7 @@
         <h3 id="mtitle"></h3>
         <p class="hint" id="mpitch"></p>
         <div id="mfiles"></div>
+        <div class="cfiles" id="cfiles" hidden></div>
         <label class="field" id="msites-wrap">Sites the researcher may visit (comma separated)<input id="msites"></label>
         <label class="field" for="mgoal">Goal for the lead agent</label>
         <textarea id="mgoal"></textarea>
@@ -491,6 +518,11 @@
           <span class="muted" id="minfo"></span>
         </div>
       </div>
+    </section>
+    <section class="block ask" id="auditbox" hidden>
+      <h2>Audit trail</h2>
+      <p class="hint">Every run on your account: the sealed jobs it ran, actions the sandbox blocked, decisions a human made, and the machines it ran on. Export it for your compliance team.</p>
+      <div id="audit-body"></div>
     </section>
     <section class="block ask" id="research" hidden>
       <h2>Research the web</h2>
@@ -609,6 +641,7 @@ const TOUR = {
   missions: async (which) => {
     setMode("missions");
     for (let i = 0; i < 40 && !MISSIONS.length; i++) await new Promise(r => setTimeout(r, 100));
+    if (which === "custom") { const cc = document.querySelector(".mcard.custom"); if (cc) { cc.click(); cc.scrollIntoView({ block: "center" }); } return; }
     const m = MISSIONS.find(x => x.id === which) || MISSIONS.find(x => x.id === "reconcile");
     const card = [...document.querySelectorAll(".mcard")][MISSIONS.indexOf(m)];
     if (m && card) { pickMission(m, card); card.scrollIntoView({ block: "center" }); }
@@ -770,10 +803,13 @@ const RSUGGEST = [
   "Fill in the pizza order form at httpbin.org/forms/post for customer Aashir, size medium, toppings bacon and mushroom, and submit it.",
 ];
 function setMode(mode) {
-  for (const [m, tab, box] of [["missions", "#tab-missions", "#missionbox"], ["analyze", "#tab-analyze", "#askbox"], ["research", "#tab-research", "#research"]]) {
+  for (const [m, tab, box] of [["missions", "#tab-missions", "#missionbox"], ["analyze", "#tab-analyze", "#askbox"],
+                                ["research", "#tab-research", "#research"], ["audit", "#tab-audit", "#auditbox"]]) {
     $(tab).setAttribute("aria-selected", String(m === mode)); $(box).hidden = m !== mode;
   }
+  if (mode === "audit") loadAudit();
 }
+$("#tab-audit").onclick = () => setMode("audit");
 $("#tab-missions").onclick = () => setMode("missions");
 $("#tab-analyze").onclick = () => setMode("analyze");
 $("#tab-research").onclick = () => setMode("research");
@@ -824,12 +860,48 @@ async function loadMissions() {
     const team = el("span", "team"); team.append(whoChip("lead")); m.team.forEach(a => team.append(whoChip(a))); b.append(team);
     b.onclick = () => pickMission(m, b); g.append(b);
   }
+  const c = el("button", "mcard custom"); c.type = "button"; c.setAttribute("aria-pressed", "false");
+  c.append(el("b", null, "Custom mission"), el("span", "for", "Any team"),
+    el("p", null, "Describe any business job, attach files and allow websites. The lead agent decides which specialists it needs."));
+  const team = el("span", "team"); ["lead", "researcher", "analyst", "reporter"].forEach(a => team.append(whoChip(a))); c.append(team);
+  c.onclick = () => pickMission({ id: "custom", custom: true, title: "Custom mission", pitch: "Describe the job; the lead agent picks the team. It can use the researcher only on the websites you allow, and the analyst only on the files you attach.",
+                                   files: [], sites: [], goal: "", team: ["researcher", "analyst", "reporter"] }, c);
+  g.append(c);
+}
+let cfiles = [];
+function missionReady() {
+  if (!mission || busy) return false;
+  if (mission.custom) return $("#mgoal").value.trim().length >= 10 && (cfiles.length > 0 || $("#msites").value.trim().length > 0);
+  return !mission.files.some(x => !mfiles[x.role]);
+}
+function refreshRun() { $("#mrun").disabled = !missionReady(); }
+$("#mgoal").addEventListener("input", refreshRun);
+$("#msites").addEventListener("input", refreshRun);
+function renderCustomFiles() {
+  const box = $("#cfiles"); box.replaceChildren();
+  box.append(el("b", null, `Files (${cfiles.length} of 3)`));
+  cfiles.forEach((d, i) => { const ch = el("span", "fchip", d.filename); const x = el("button", null, "×"); x.type = "button";
+    x.setAttribute("aria-label", `Remove ${d.filename}`); x.onclick = () => { cfiles.splice(i, 1); renderCustomFiles(); refreshRun(); }; ch.append(x); box.append(ch); });
+  if (cfiles.length < 3) {
+    const up = el("label", "btn ghost", "Upload a file"); const inp = el("input"); inp.type = "file"; inp.accept = ".csv,.xlsx,.xls,.json"; up.append(inp);
+    const sel = el("select"); sel.setAttribute("aria-label", "Add a sample file");
+    sel.append(new Option("Add a sample file…", ""));
+    [...new Set(MISSIONS.flatMap(m => m.files.map(f => f.sample)))].forEach(n => sel.append(new Option(n, n)));
+    const add = async (req) => { try { const r = await req; const d = await r.json(); if (!r.ok) throw new Error(d.detail);
+      cfiles.push(d); renderCustomFiles(); refreshRun();
+      printSlip({ title: `Profile ${d.filename}`, receipt: d.profiling_receipt, events: d.profiling_events, limits: d.limits }); } catch (e) { alert(`Could not open the file: ${e.message}`); } };
+    inp.onchange = () => { if (!inp.files[0]) return; const fd = new FormData(); fd.append("file", inp.files[0]); add(api("/api/datasets", { method: "POST", body: fd })); };
+    sel.onchange = () => sel.value && add(api(`/api/samples/${encodeURIComponent(sel.value)}`, { method: "POST" }));
+    box.append(up, sel);
+  }
 }
 function pickMission(m, card) {
   mission = m; mfiles = {};
   document.querySelectorAll(".mcard").forEach(c => c.setAttribute("aria-pressed", String(c === card)));
   $("#mform").hidden = false; $("#mtitle").textContent = m.title; $("#mpitch").textContent = m.pitch;
   $("#mgoal").value = m.goal; $("#msites").value = m.sites.join(", "); $("#msites-wrap").hidden = !m.team.includes("researcher");
+  $("#mgoal").placeholder = m.custom ? "For example: compare our two supplier price lists and tell us which supplier to use for each product." : "";
+  $("#cfiles").hidden = !m.custom; if (m.custom) { cfiles = []; renderCustomFiles(); }
   const box = $("#mfiles"); box.replaceChildren();
   for (const f of m.files) {
     const row = el("div", "mfile");
@@ -844,13 +916,13 @@ function pickMission(m, card) {
         mfiles[f.role] = d; got.textContent = `${d.filename}: ${d.profile.rows} rows, ${d.profile.columns.length} columns`;
         printSlip({ title: `Profile ${d.filename}`, receipt: d.profiling_receipt, events: d.profiling_events, limits: d.limits });
       } catch (e) { got.textContent = `Could not open the file: ${e.message}`; got.style.color = "var(--stamp)"; }
-      $("#mrun").disabled = busy || m.files.some(x => !mfiles[x.role]);
+      refreshRun();
     };
     sample.onclick = () => load(api(`/api/samples/${encodeURIComponent(f.sample)}`, { method: "POST" }), f.sample);
     inp.onchange = () => { if (!inp.files[0]) return; const fd = new FormData(); fd.append("file", inp.files[0]); load(api("/api/datasets", { method: "POST", body: fd }), inp.files[0].name); };
     row.append(lab, sample, up, got); box.append(row);
   }
-  $("#mrun").disabled = true;
+  refreshRun();
 }
 $("#mstop").onclick = () => $("#stop").onclick();
 $("#mrun").onclick = async () => {
@@ -864,7 +936,7 @@ $("#mrun").onclick = async () => {
   try {
     const res = await api("/api/missions/run", { method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ mission: mission.id, goal: $("#mgoal").value.trim() || null, isolation: isolation(),
-        dataset_ids: mission.files.map(f => mfiles[f.role].dataset_id),
+        dataset_ids: mission.custom ? cfiles.map(d => d.dataset_id) : mission.files.map(f => mfiles[f.role].dataset_id),
         domains: $("#msites").value.split(",").map(x => x.trim()).filter(Boolean) }) });
     if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || `HTTP ${res.status}`); }
     await readStream(res, tl, steps);
@@ -872,9 +944,53 @@ $("#mrun").onclick = async () => {
     tl.append(el("li", "error", `Mission stopped: ${e.message}`));
   } finally {
     clearInterval(tick); busy = false; $("#mrun").textContent = "Run mission"; stopBtn.hidden = true;
-    $("#mrun").disabled = mission.files.some(x => !mfiles[x.role]); setReady(!!dataset);
+    refreshRun(); setReady(!!dataset);
   }
 };
+/* ---------- audit trail ---------- */
+async function loadAudit() {
+  const box = $("#audit-body");
+  if (!session) {
+    box.replaceChildren(el("p", null, "Sign in to see the audit trail of your runs."));
+    const b = el("button", "btn", "Sign in"); b.type = "button"; b.onclick = () => $("#signin").showModal(); box.append(b); return;
+  }
+  box.replaceChildren(el("p", "muted", "Loading the audit trail…"));
+  const res = await api("/api/audit"); const d = await res.json().catch(() => ({}));
+  if (!res.ok) { box.replaceChildren(el("p", "error", d.detail || "Could not load the audit trail")); return; }
+  const s = d.summary, ap = s.approvals || {};
+  const tiles = el("div", "atiles");
+  [["Runs", s.runs], ["Missions", s.missions], ["Sealed jobs", s.sandbox_jobs], ["Actions blocked", s.blocked_actions],
+   ["Approved by a human", ap.approve || 0], ["Rejected by a human", ap.reject || 0], ["Fresh VMs", s.fresh_vms], ["Verified runs", s.verified]]
+    .forEach(([k, v]) => { const t = el("div"); t.append(el("b", null, String(v)), el("span", null, k)); tiles.append(t); });
+  const exp = el("button", "btn ghost", "Export CSV"); exp.type = "button";
+  exp.onclick = async () => { const r = await api("/api/audit.csv"); const blob = await r.blob();
+    const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "countersign-audit-trail.csv"; a.click(); URL.revokeObjectURL(a.href); };
+  const wrap = el("div", "atable"); const tb = el("table"); const head = el("tr");
+  ["When", "Type", "Question", "Status", "Checked", "Jobs", "Blocked", "Human decisions", "Machine"].forEach(h => head.append(el("th", null, h)));
+  const thead = el("thead"); thead.append(head); const tbody = el("tbody"); tb.append(thead, tbody); wrap.append(tb);
+  const kids = {};
+  d.runs.filter(r => r.part_of_mission).forEach(r => (kids[r.part_of_mission] ||= []).unshift(r));
+  const ordered = [];
+  d.runs.filter(r => !r.part_of_mission || !d.runs.some(x => x.run_id === r.part_of_mission))
+    .forEach(r => { ordered.push(r); (kids[r.run_id] || []).forEach(k => ordered.push(k)); });
+  for (const r of ordered) {
+    const tr = el("tr", r.part_of_mission ? "child" : "");
+    const decisions = Object.entries(r.approvals).map(([k, v]) => `${v} ${k === "approve" ? "approved" : k === "reject" ? "rejected" : k}`).join(", ") || "none";
+    const q = r.question.length > 110 ? r.question.slice(0, 107) + "…" : r.question;
+    [new Date(r.created_at).toLocaleString(), r.part_of_mission ? `${r.kind}, mission step` : r.kind, q, r.status, r.verified || "",
+     String(r.sandbox_jobs), String(r.blocked_actions), decisions, r.machines.join(", ")]
+      .forEach((v, i) => tr.append(el("td", i === 2 ? "q" : "", v)));
+    tr.tabIndex = 0; tr.onclick = () => openRun(r.run_id); tr.onkeydown = e => e.key === "Enter" && openRun(r.run_id);
+    tbody.append(tr);
+  }
+  const evh = el("h3", null, "Security events"); evh.style.cssText = "margin: 18px 0 0; font: 700 17px var(--display)";
+  const ev = el("ul", "aevents");
+  if (!d.events.length) ev.append(el("li", "muted", "No blocked actions or human decisions yet."));
+  d.events.forEach(e => { const li = el("li"); li.append(el("span", `k ${e.kind}`, e.kind), el("span", null, e.detail)); ev.append(li); });
+  const row = el("div", "row"); row.append(exp);
+  box.replaceChildren(tiles, row, el("div", "muted", " "), wrap, evh, ev);
+}
+
 let nested = false;
 function agentCard(tl, steps, step, agent, task) {
   const key = `agent${step}`;

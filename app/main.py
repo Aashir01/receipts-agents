@@ -7,6 +7,8 @@ self-heals on errors, and explains only numbers that real execution printed.
 """
 
 import asyncio
+import csv
+import io
 import base64
 import hashlib
 import json
@@ -947,13 +949,19 @@ async def _forward(mission_id: str, step: int, agent: str, resp, sink: dict):
 @app.post("/api/missions/run")
 async def mission_run(body: MissionReq, request: Request):
     rate_limit(request)
-    t = missions.TEMPLATES.get(body.mission)
+    custom = body.mission == "custom"
+    if custom:
+        if not body.goal or len(body.goal.strip()) < 10:
+            raise HTTPException(400, "Describe the goal of the mission in a sentence or two.")
+        t = missions.custom_template(len(body.dataset_ids), research.clean_domains(body.domains))
+    else:
+        t = missions.TEMPLATES.get(body.mission)
     if not t:
         raise HTTPException(404, "Unknown mission")
     user = await get_user(request)
     if body.isolation == "vm" and not user:
         raise HTTPException(401, "Sign in to run on a fresh VM (each one is a real, billed Vultr server).")
-    if len(body.dataset_ids) != len(t["files"]):
+    if not custom and len(body.dataset_ids) != len(t["files"]):
         raise HTTPException(400, f"This mission needs {len(t['files'])} file(s): " + ", ".join(f["label"] for f in t["files"]))
     files = []
     for fid in body.dataset_ids:
@@ -962,7 +970,9 @@ async def mission_run(body: MissionReq, request: Request):
             raise HTTPException(404, "A mission file was not found. Load it again.")
         files.append(d)
     domains = research.clean_domains(body.domains or t["sites"])
-    if any(a == "researcher" for a, _ in t["steps"]) and not domains:
+    if custom and not files and not domains:
+        raise HTTPException(400, "Attach at least one file or allow at least one website for the team to work with.")
+    if not custom and any(a == "researcher" for a, _ in t["steps"]) and not domains:
         raise HTTPException(400, "Name the website(s) the researcher may visit.")
     goal = (body.goal or t["goal"]).strip()
     owner = user["id"] if user else None
@@ -992,8 +1002,30 @@ async def mission_run(body: MissionReq, request: Request):
         inputs = {f["role"]: d["filename"] for f, d in zip(t["files"], files)}
         inputs.update({"sites": ", ".join(domains), "web": "the file the researcher produces"})
         yield {"type": "step", "id": "lead", "status": "running", "title": "Lead agent is planning the mission"}
-        lead = await llm.chat(missions.lead_messages(body.mission, goal, inputs), max_tokens=5000)
-        plan, brief, from_model = missions.accept_plan(body.mission, research.parse_json(lead["text"]), inputs)
+        if custom:
+            msgs = missions.custom_lead_messages(goal, inputs)
+            lead = await llm.chat(msgs, max_tokens=5000)
+            reply = research.parse_json(lead["text"]) or {}
+            plan, why = missions.accept_custom_plan(reply, bool(files), bool(domains))
+            if not plan:                                   # one chance to fix it, with the reason
+                yield {"type": "step", "id": "lead", "status": "running",
+                       "title": f"Lead agent's plan was rejected ({why}); asking it to fix the plan"}
+                lead = await llm.chat(msgs + [{"role": "assistant", "content": lead["text"][:3000]},
+                                              {"role": "user", "content": f"That plan breaks a rule: {why}. Return a corrected plan."}],
+                                      max_tokens=5000)
+                reply = research.parse_json(lead["text"]) or {}
+                plan, why = missions.accept_custom_plan(reply, bool(files), bool(domains))
+            from_model = plan is not None
+            brief = str(reply.get("brief") or "")[:300]
+            if not plan:
+                plan = ([{"agent": "researcher", "task": f"Collect the facts needed for this goal from {inputs['sites']}: {goal}"}]
+                        if domains else []) + \
+                       [{"agent": "analyst", "task": f"Using the available files, compute and print the numbers that answer: {goal}"},
+                        {"agent": "reporter", "task": "Write the brief for the goal."}]
+                brief = brief or "The team will collect what it needs, compute the answer and brief you."
+        else:
+            lead = await llm.chat(missions.lead_messages(body.mission, goal, inputs), max_tokens=5000)
+            plan, brief, from_model = missions.accept_plan(body.mission, research.parse_json(lead["text"]), inputs)
         yield {"type": "step", "id": "lead", "status": "done", "title": f"Lead agent planned {len(plan)} steps",
                "model": lead["model"], "latency_s": lead["latency_s"]}
         yield {"type": "mission_plan", "title": t["title"], "for": t["for"], "brief": brief, "from_model": from_model,
@@ -1014,8 +1046,10 @@ async def mission_run(body: MissionReq, request: Request):
                 if st["agent"] == "researcher":
                     resp = await research_run(Research(goal=task[:1500], domains=domains), request)
                 else:
-                    extra = [d["id"] for d in files[1:]] + ([web_ds["dataset_id"]] if web_ds else [])
-                    resp = await ask(Ask(dataset_id=files[0]["id"], question=task[:3000], extra_dataset_ids=extra), request)
+                    ids = [d["id"] for d in files] + ([web_ds["dataset_id"]] if web_ds else [])
+                    if not ids:
+                        raise HTTPException(400, "There is no file for the analyst to work on.")
+                    resp = await ask(Ask(dataset_id=ids[0], question=task[:3000], extra_dataset_ids=ids[1:]), request)
                 async for item in _forward(rec.id, i, st["agent"], resp, sink):
                     yield item
             except HTTPException as e:
@@ -1107,6 +1141,91 @@ async def my_runs(request: Request):
         raise HTTPException(401, "Sign in to see your history")
     return await db.select("runs", {"owner": f"eq.{user['id']}", "order": "created_at.desc", "limit": "40",
                                     "select": "id,question,status,verified,share_slug,is_public,created_at,total_s"})
+
+
+async def _audit(user: dict) -> dict:
+    """Every run on the account with its sealed jobs, blocked actions, human decisions and machines."""
+    runs = await db.select("runs", {"owner": f"eq.{user['id']}", "order": "created_at.desc", "limit": "150",
+                                    "select": "id,question,status,verified,created_at,total_s"})
+    ids = [r["id"] for r in runs]
+    receipts, approvals, links = [], [], []
+    for i in range(0, len(ids), 50):                     # keep URLs short
+        chunk = "in.(" + ",".join(ids[i:i + 50]) + ")"
+        receipts += await db.select("receipts", {"run_id": chunk, "limit": "5000",
+                                                 "select": "run_id,kind,status,executed_on,events,job_id,created_at"})
+        approvals += await db.select("run_events", {"run_id": chunk, "type": "eq.approval_result", "limit": "2000",
+                                                    "select": "run_id,payload,created_at"})
+        links += await db.select("run_events", {"run_id": chunk, "type": "eq.agent_done", "limit": "2000",
+                                                "select": "run_id,payload"})
+    parent = {l["payload"].get("child_run"): l["run_id"] for l in links if l["payload"].get("child_run")}
+    by_run: dict[str, dict] = {r["id"]: {"jobs": 0, "blocked": 0, "approvals": {}, "machines": set(), "kinds": set()} for r in runs}
+    events = []
+    for rc in receipts:
+        a = by_run.get(rc["run_id"])
+        if not a:
+            continue
+        if rc["kind"] not in ("profile", "report"):
+            a["jobs"] += 1
+        a["kinds"].add(rc["kind"])
+        a["machines"].add("fresh VM" if (rc.get("executed_on") or "").startswith("disposable-vm") else "shared executor")
+        for ev in rc.get("events") or []:
+            if ev.get("kind") in ("blocked", "killed"):
+                a["blocked"] += 1
+                events.append({"time": ev.get("t"), "run_id": rc["run_id"], "kind": ev["kind"], "detail": ev.get("detail", "")[:200]})
+    for ap in approvals:
+        a = by_run.get(ap["run_id"])
+        d = ap["payload"].get("decision", "timeout")
+        if a:
+            a["approvals"][d] = a["approvals"].get(d, 0) + 1
+        events.append({"time": ap.get("created_at"), "run_id": ap["run_id"], "kind": f"approval {d}",
+                       "detail": f"A human decision was needed ({ap['payload'].get('findings', 0)} finding(s)); decision: {d}"})
+    rows = []
+    for r in runs:
+        a = by_run[r["id"]]
+        kind = ("mission" if r["question"].startswith("Mission:") else "web research" if "browser" in a["kinds"]
+                else "analysis")
+        rows.append({"run_id": r["id"], "created_at": r["created_at"], "kind": kind, "question": r["question"][:200],
+                     "status": r["status"], "verified": r.get("verified") or "", "sandbox_jobs": a["jobs"],
+                     "blocked_actions": a["blocked"], "approvals": a["approvals"], "machines": sorted(a["machines"]),
+                     "part_of_mission": parent.get(r["id"]), "total_s": r.get("total_s")})
+    fresh = {rc["executed_on"] for rc in receipts if (rc.get("executed_on") or "").startswith("disposable-vm")}
+    appr = {}
+    for row in rows:
+        for k, v in row["approvals"].items():
+            appr[k] = appr.get(k, 0) + v
+    summary = {"runs": len(rows), "missions": sum(r["kind"] == "mission" for r in rows),
+               "sandbox_jobs": sum(r["sandbox_jobs"] for r in rows), "blocked_actions": sum(r["blocked_actions"] for r in rows),
+               "approvals": appr, "fresh_vms": len(fresh), "verified": sum(r["verified"] == "verified" for r in rows),
+               "mismatch": sum(r["verified"] == "mismatch" for r in rows)}
+    events.sort(key=lambda e: str(e.get("time") or ""), reverse=True)
+    return {"summary": summary, "runs": rows, "events": events[:60]}
+
+
+@app.get("/api/audit")
+async def audit(request: Request):
+    user = await get_user(request)
+    if not user:
+        raise HTTPException(401, "Sign in to see your audit trail")
+    return await _audit(user)
+
+
+@app.get("/api/audit.csv")
+async def audit_csv(request: Request):
+    user = await get_user(request)
+    if not user:
+        raise HTTPException(401, "Sign in to export your audit trail")
+    data = await _audit(user)
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["run_id", "created_at", "kind", "question", "status", "verified", "sandbox_jobs", "blocked_actions",
+                "approvals_approved", "approvals_rejected", "approvals_timeout", "machines", "part_of_mission", "total_s"])
+    for r in data["runs"]:
+        ap = r["approvals"]
+        w.writerow([r["run_id"], r["created_at"], r["kind"], r["question"], r["status"], r["verified"], r["sandbox_jobs"],
+                    r["blocked_actions"], ap.get("approve", 0), ap.get("reject", 0), ap.get("timeout", 0),
+                    "; ".join(r["machines"]), r["part_of_mission"] or "", r["total_s"]])
+    return Response(content=buf.getvalue(), media_type="text/csv",
+                    headers={"Content-Disposition": 'attachment; filename="countersign-audit-trail.csv"'})
 
 
 async def _run_bundle(run: dict) -> dict:

@@ -134,11 +134,10 @@
   .modes a.go { font-weight: 600; color: var(--blue); }
 
   .mlede { flex: 2 1 600px; margin: 0; font-size: 18px; line-height: 1.6; color: var(--body); }
-  .mgrid { margin-top: 36px; display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); border: 1.5px solid var(--ink); }
-  .mgrid a { display: flex; flex-direction: column; gap: 10px; padding: 26px; text-decoration: none; border-right: 1.5px solid var(--ink); }
-  .mgrid a:last-child { border-right: 0; }
+  .mgrid { margin-top: 36px; display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 1.5px; background: var(--ink); border: 1.5px solid var(--ink); }
+  .mgrid a { display: flex; flex-direction: column; gap: 10px; padding: 26px; text-decoration: none; background: var(--bg); }
   .mgrid a:hover { background: var(--hover); }
-  @media (max-width: 1100px) { .mgrid a { border-right: 0; border-bottom: 1.5px solid var(--ink); } .mgrid a:last-child { border-bottom: 0; } }
+  @media (max-width: 640px) { .mgrid { grid-template-columns: 1fr; } }
   .mgrid .for { font-size: 13px; color: var(--muted); }
   .mgrid b { font: 700 23px/1.15 var(--display); letter-spacing: -0.02em; }
   .mgrid a > span:not(.for):not(.team) { color: var(--body); font-size: 15px; line-height: 1.55; }
@@ -190,7 +189,7 @@
       <a href="#missions">Missions</a>
       <a href="#how">How it works</a>
       <a href="#sealed">Security</a>
-      <a href="#vultr">Vultr</a>
+      <a href="#teams">For teams</a>
       <a href="https://github.com/Aashir01/receipts-agents">GitHub</a>
     </nav>
     <div class="cta">
@@ -264,8 +263,13 @@
     <div class="mgrid">
       <a href="/workspace?tour=missions&amp;m=price_check"><span class="for">E-commerce and retail</span><b>Competitor price check</b><span>Collects competitor prices from approved sites and shows where you are overpriced or leaving money on the table.</span><span class="team"><i class="lead">Lead</i><i class="res">Researcher</i><i class="ana">Analyst</i><i class="rep">Reporter</i></span></a>
       <a href="/workspace?tour=missions&amp;m=reconcile"><span class="for">Finance and accounting</span><b>Invoice reconciliation</b><span>Matches invoices to payments and flags what is unpaid, part-paid, overpaid, duplicated or unmatched.</span><span class="team"><i class="lead">Lead</i><i class="ana">Analyst</i><i class="rep">Reporter</i></span></a>
+      <a href="/workspace?tour=missions&amp;m=expense_audit"><span class="for">Finance and compliance</span><b>Expense policy audit</b><span>Checks every claim against your policy: limits, receipts, weekends, alcohol, duplicates and split purchases.</span><span class="team"><i class="lead">Lead</i><i class="ana">Analyst</i><i class="rep">Reporter</i></span></a>
       <a href="/workspace?tour=missions&amp;m=monthly_report"><span class="for">Management and founders</span><b>Monthly business report</b><span>Turns a sales export into a board-ready brief: KPIs, trends, top movers and risks, every number recomputed.</span><span class="team"><i class="lead">Lead</i><i class="ana">Analyst</i><i class="rep">Reporter</i></span></a>
+      <a href="/workspace?tour=missions&amp;m=churn_risk"><span class="for">SaaS and customer success</span><b>Churn risk review</b><span>Scores every account with transparent rules and shows the monthly revenue at risk before renewals.</span><span class="team"><i class="lead">Lead</i><i class="ana">Analyst</i><i class="rep">Reporter</i></span></a>
+      <a href="/workspace?tour=missions&amp;m=pipeline_review"><span class="for">Sales leadership and RevOps</span><b>Sales pipeline review</b><span>Weighted forecast, stale and slipped deals, and win rates by rep, before the quarter closes.</span><span class="team"><i class="lead">Lead</i><i class="ana">Analyst</i><i class="rep">Reporter</i></span></a>
+      <a href="/workspace?tour=missions&amp;m=reorder_plan"><span class="for">Supply chain and operations</span><b>Inventory reorder plan</b><span>Days of cover per SKU, what to reorder now, and how much cash is stuck in overstock.</span><span class="team"><i class="lead">Lead</i><i class="ana">Analyst</i><i class="rep">Reporter</i></span></a>
       <a href="/workspace?tour=missions&amp;m=cleanup"><span class="for">Operations and CRM</span><b>Messy data clean-up</b><span>Cleans a messy export into a consistent file and logs every change, so nothing is fixed silently.</span><span class="team"><i class="lead">Lead</i><i class="ana">Analyst</i><i class="rep">Reporter</i></span></a>
+      <a href="/workspace?tour=missions&amp;m=custom"><span class="for">Any team</span><b>Custom mission</b><span>Describe any job, attach files and allow websites. The lead agent decides which specialists it needs.</span><span class="team"><i class="lead">Lead</i><i class="res">Researcher</i><i class="ana">Analyst</i><i class="rep">Reporter</i></span></a>
     </div>
   </section>
 
@@ -315,6 +319,21 @@
       <a href="/workspace?tour=inject"><b>Watch a prompt injection get contained</b><span>A support ticket hides instructions to steal secrets. See what the sandbox does with them.</span><em>Open this scenario</em></a>
       <a href="/workspace?tour=verify"><b>A verified analysis with charts</b><span>Margins by region and the monthly trend, recomputed by the auditor.</span><em>Open this scenario</em></a>
       <a href="/workspace?tour=web"><b>Research the web in a sealed browser</b><span>Approve the sites, watch the browser work, then analyse what it found.</span><em>Open this scenario</em></a>
+    </div>
+  </section>
+
+  <section class="wrap block" id="teams" aria-labelledby="teams-title">
+    <div class="split">
+      <h2 class="sec" id="teams-title">Built for teams that answer to auditors</h2>
+      <p class="mlede">Agents that touch real data and real websites need a paper trail. Countersign keeps one by default.</p>
+    </div>
+    <div class="vultr">
+      <div><b>Audit trail with CSV export</b><span>Every run, sealed job, blocked action, human decision and machine on one page, ready for your compliance team.</span></div>
+      <div><b>Human approval where it matters</b><span>Risky code, unfamiliar websites and anything that submits, buys or sends wait for a person.</span></div>
+      <div><b>Isolation you can choose</b><span>A hardened shared sandbox for speed, or a never-used Vultr VM per run for maximum isolation.</span></div>
+      <div><b>Accounts and private history</b><span>Supabase sign-in with row-level security; runs are private until you share a link.</span></div>
+      <div><b>Reproducible by design</b><span>Hashes for every script, input and output, and one-click replay that compares them.</span></div>
+      <div><b>An API underneath</b><span>Everything in the workspace is a documented HTTP endpoint. <a href="/docs">Open the API docs</a>.</span></div>
     </div>
   </section>
 

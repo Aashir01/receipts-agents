@@ -73,6 +73,15 @@ Ready-made missions, each with realistic sample data:
 - **Invoice reconciliation** (finance): matches invoices to payments and flags unpaid, part-paid, overpaid, duplicated and unmatched payments (the sample hides a letter-O typo, a duplicate, an overpayment and an unknown reference).
 - **Monthly business report** (management): KPIs, month-over-month growth, regions, channels, top movers, all recomputed.
 - **Messy data clean-up** (operations): a consistent file plus a change log of every fix.
+- **Expense policy audit** (finance and compliance): meal and hotel limits, flight class, alcohol, missing receipts, weekend claims, duplicates and split purchases.
+- **Churn risk review** (SaaS): transparent rule-based risk scores per account and the monthly revenue at risk.
+- **Inventory reorder plan** (supply chain): days of cover, reorder points and quantities from two files, and cash tied up in overstock.
+- **Sales pipeline review** (RevOps): weighted forecast, stale and slipped deals, win rate per rep.
+- **Custom mission**: describe any goal, attach up to three files and allow websites; the lead agent designs the team itself. Its plan is checked against hard rules (2 to 4 steps, reporter last, researcher only with allowed sites and before the analyst, analyst only with files); a rejected plan gets one corrected attempt, then a safe default.
+
+### Audit trail
+
+The **Audit trail** tab lists every run on the account with its sealed jobs, blocked actions, human approvals and rejections, and the machine each ran on (shared executor or fresh VM). Mission steps are grouped under their mission. One click exports it as CSV for a compliance team (`GET /api/audit.csv`). Every workspace action is also a documented HTTP endpoint (`/docs`).
 
 With **Run on: a fresh Vultr VM**, the whole team shares one never-used VM that is destroyed when the mission ends. Every mission can be downloaded as a PDF brief with the team's steps and every receipt.
 

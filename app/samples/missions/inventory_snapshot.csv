@@ -1,0 +1,13 @@
+sku,product,on_hand,on_order,unit_cost_usd,lead_time_days
+SKU-101,Steel water bottle,120,0,6.20,21
+SKU-102,Bamboo cutting board,410,0,9.80,35
+SKU-103,Ceramic mug set,95,200,12.50,28
+SKU-104,Cast iron skillet,260,0,18.40,45
+SKU-105,Linen tea towels,140,0,4.10,14
+SKU-106,Glass storage jars,60,0,7.75,21
+SKU-107,Chef knife,35,0,22.00,60
+SKU-108,Silicone spatula,180,400,2.30,10
+SKU-109,French press,300,0,14.90,30
+SKU-110,Spice rack,520,0,11.60,25
+SKU-111,Salad spinner,44,0,8.40,20
+SKU-112,Pasta maker,210,0,31.00,75
