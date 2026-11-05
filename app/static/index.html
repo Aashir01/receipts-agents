@@ -1135,7 +1135,7 @@ function renderBundle(b, label) {
   banner.append(el("h2", null, label));
   banner.append(el("p", "plan", b.run.question));
   banner.append(el("p", "muted", `${b.dataset ? b.dataset.filename + ", " : ""}${new Date(b.run.created_at).toLocaleString()}, status ${b.run.status}`));
-  if (sharedMode) { const a = el("a", "dl", "Try Countersign on your own data"); a.href = "/app"; banner.append(a); }
+  if (sharedMode) { const a = el("a", "dl", "Try Countersign on your own data"); a.href = "/workspace"; banner.append(a); }
   const steps = {};
   for (const ev of b.events) handle(ev, tl, steps);
 }

@@ -5,7 +5,7 @@
 Built for the [Vultr: Agent Rush Hackathon](https://lablab.ai/ai-hackathons/vultr-hackathon) on lablab.ai, Challenge 1: *Blast Radius Zero*.
 
 - Website: https://agentrush.aashirnoman.dev
-- Workspace: https://agentrush.aashirnoman.dev/app
+- Workspace: https://agentrush.aashirnoman.dev/workspace
 
 (The repository keeps its original name, `receipts-agents`.)
 

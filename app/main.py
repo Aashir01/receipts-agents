@@ -1073,10 +1073,14 @@ NO_CACHE = {"Cache-Control": "no-cache"}      # always revalidate, so a redeploy
 
 
 @app.get("/")
-async def landing():
-    return FileResponse(HERE / "static" / "landing.html", headers=NO_CACHE)
+async def landing(request: Request):
+    # If a proxy rule strips a /app or /workspace prefix, the request arrives here; serve the workspace.
+    prefix = request.headers.get("x-forwarded-prefix", "")
+    page = "index.html" if prefix.rstrip("/") in ("/app", "/workspace") else "landing.html"
+    return FileResponse(HERE / "static" / page, headers=NO_CACHE)
 
 
+@app.get("/workspace")
 @app.get("/app")
 async def workspace():
     return FileResponse(HERE / "static" / "index.html", headers=NO_CACHE)
