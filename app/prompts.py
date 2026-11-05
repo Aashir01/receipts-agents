@@ -20,6 +20,10 @@ Write ONE complete Python script that answers the user's question about their fi
 
 Rules:
 - The script must be self-contained: import everything and load the file with pandas ({loader}) at the top.
+- Write every line in full. Never use ... or placeholders, and never leave a step for later.
+- Keep it focused: at most about 120 lines and 4 charts. For a broad request such as a full EDA,
+  cover shape and types, missing values, summary statistics, the main categories, correlations
+  between numeric columns and the trend over time, and print the results.
 - Print every number the answer depends on, with clear labels, e.g. print("Total sales North:", x).
 - Percentages: multiply ratios by 100 before printing them with a % sign (0.37 -> "37.0%"). Never print a raw fraction with %.
 - Keep printed lines under 120 characters; print tables with DataFrame.to_string().

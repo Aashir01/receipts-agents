@@ -476,8 +476,18 @@ async def ask(body: Ask, request: Request):
         for attempt in range(1, MAX_ATTEMPTS + 1):
             yield {"type": "step", "id": f"code{attempt}", "status": "running",
                    "title": "Writing code" if attempt == 1 else f"Fixing code (attempt {attempt})"}
-            reply = await llm.chat(messages, max_tokens=8000)
+            reply = await llm.chat(messages, max_tokens=12000)
             code, model = llm.extract_code(reply["text"]), reply["model"]
+            for _ in range(2):                            # a sketch with "..." gaps never reaches the sandbox
+                if not llm.has_placeholders(code):
+                    break
+                yield {"type": "step", "id": f"code{attempt}", "status": "running",
+                       "title": "The draft had '...' gaps; asking for the complete script"}
+                reply = await llm.chat(messages + [
+                    {"role": "assistant", "content": f"```python\n{code}\n```"},
+                    {"role": "user", "content": "That script has '...' placeholders, so it cannot run. Write the "
+                     "complete script with every line filled in, and keep it under 120 lines."}], max_tokens=12000)
+                code, model = llm.extract_code(reply["text"]), reply["model"]
             yield {"type": "code", "attempt": attempt, "code": code, "model": model, "latency_s": reply["latency_s"]}
 
             findings = guard.scan_code(code)
@@ -598,7 +608,7 @@ async def ask(body: Ask, request: Request):
             yield {"type": "answer", "markdown":
                    f"The agent could not produce working code in {MAX_ATTEMPTS} attempts. "
                    "Every attempt is shown above with its real error.", "model": None,
-                   "grounded_in_job": result["job_id"]}
+                   "grounded_in_job": None}
             status = "failed"
         yield {"type": "done", "total_s": round(time.monotonic() - started, 2), "status": status,
                "run_id": rec.id, "saved": db.ENABLED,

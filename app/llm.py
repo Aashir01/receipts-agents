@@ -48,14 +48,16 @@ def _answer_text(data: dict) -> tuple[str, str, dict]:
     msg = choice.get("message") or {}
     finish = choice.get("finish_reason") or "?"
     text = strip_thinking(msg.get("content") or "")
-    if not text:
-        # Some servers put everything in a separate reasoning field.
+    from_reasoning = False
+    if not text and finish != "length":
+        # Some servers put a finished answer in a separate reasoning field. Never use it when the
+        # model was cut off: then the reasoning holds only drafts and sketches with "..." gaps.
         for key in ("reasoning_content", "reasoning"):
             alt = msg.get(key)
             if isinstance(alt, str) and "```" in alt:
-                text = alt.strip()
+                text, from_reasoning = alt.strip(), True
                 break
-    info = {"finish_reason": finish, "usage": data.get("usage", {}),
+    info = {"finish_reason": finish, "usage": data.get("usage", {}), "from_reasoning": from_reasoning,
             "fields": sorted(k for k, v in msg.items() if v)}
     return text, finish, info
 
@@ -97,6 +99,14 @@ def strip_thinking(text: str) -> str:
     if "<think>" in text:
         text = text.split("<think>")[0]
     return text.strip()
+
+
+_PLACEHOLDER = re.compile(r"^\s*\.\.\.\s*(#.*)?$|=\s*\.\.\.\s*(#.*)?$|[\[(,]\s*\.\.\.\s*[\])]|^\s*#\s*\.\.\.", re.M)
+
+
+def has_placeholders(code: str) -> bool:
+    """True when a script is a sketch: lines like `x = ...`, `[...]`, or a bare `...`."""
+    return bool(_PLACEHOLDER.search(code))
 
 
 def extract_code(text: str) -> str:
