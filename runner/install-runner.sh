@@ -881,12 +881,15 @@ echo "==> Restarting the runner"
 systemctl restart agentrush-runner
 sleep 3
 BIND=$(grep '^RUNNER_BIND=' /etc/agentrush/runner.env | cut -d= -f2-)
-curl -fsS "http://${BIND:-127.0.0.1}:8080/health" | python3 -c '
+curl -fsS "http://${BIND:-127.0.0.1}:8080/health" > /tmp/runner-health.json
+python3 - /tmp/runner-health.json <<'PYEOF'
 import json, sys
-d = json.load(sys.stdin)
+d = json.load(open(sys.argv[1]))
 print("runner ok:", d.get("ok"), "| signs results:", d.get("signing"))
-for k, v in (d.get("images") or {}).items():
-    print(f"  {k}: {v.get(\"digest\", \"?\")[:90]}")'
+for name, im in (d.get("images") or {}).items():
+    print("  " + name + ": " + str(im.get("digest", "?"))[:90])
+PYEOF
+rm -f /tmp/runner-health.json
 echo "Done. Previous version kept at $DIR/app.py.bak"
 AGENTRUSH_EOF
 
