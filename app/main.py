@@ -1041,6 +1041,8 @@ async def mission_run(body: MissionReq, request: Request):
                 reply = research.parse_json(lead["text"]) or {}
                 plan, why = missions.accept_custom_plan(reply, bool(files), bool(domains))
             from_model = plan is not None
+            if not plan:
+                print("[mission] custom plan rejected:", why, "|", str(lead["text"])[:400], flush=True)
             brief = str(reply.get("brief") or "")[:300]
             if not plan:
                 plan = ([{"agent": "researcher", "task": f"Collect the facts needed for this goal from {inputs['sites']}: {goal}"}]

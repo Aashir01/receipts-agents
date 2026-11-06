@@ -179,6 +179,8 @@ Your team:
 The user gives you a business goal, the files they attached and the websites the researcher may
 visit. Decide which specialists are needed and write a concrete task for each. Rules:
 - 2 to 4 steps in total; the LAST step is always the reporter.
+- "agent" is exactly one of: researcher, analyst, reporter (lowercase). The analyst's work is
+  already checked by an independent auditor, so do not add a separate verification step.
 - Use the researcher only if websites are allowed, and only for facts that live on those sites.
   Researcher steps come before analyst steps.
 - Use the analyst only if there are files, or after a researcher step (its records become a file).
@@ -202,32 +204,47 @@ def custom_lead_messages(goal: str, inputs: dict) -> list[dict]:
     return [{"role": "system", "content": CUSTOM_LEAD_SYSTEM.format(agents=agents)}, {"role": "user", "content": user}]
 
 
+ALIASES = {"researcher": "researcher", "research": "researcher", "web researcher": "researcher", "browser": "researcher",
+           "analyst": "analyst", "data analyst": "analyst", "analysis": "analyst", "auditor": "analyst",
+           "reporter": "reporter", "writer": "reporter", "report": "reporter"}
+
+
+def _agent_name(a) -> str:
+    a = str(a or "").strip().lower().split(":")[0].strip()
+    return ALIASES.get(a, ALIASES.get(a.split(" ")[-1] if a else a, a))
+
+
 def accept_custom_plan(reply: dict | None, has_files: bool, has_sites: bool) -> tuple[list[dict] | None, str]:
-    """Validate a plan the lead agent designed itself. Returns (steps, reason) with steps None if rejected."""
+    """Validate a plan the lead agent designed itself. Returns (steps, reason) with steps None if rejected.
+
+    Forgiving on form (agent-name case, a missing final reporter, long tasks), strict on safety:
+    the researcher only with allowed sites and before any analyst, the analyst only with data."""
     steps = (reply or {}).get("steps")
-    if not isinstance(steps, list) or not 2 <= len(steps) <= 4:
-        return None, "the plan must have 2 to 4 steps"
-    clean, seen_analyst, analyst_ok = [], False, has_files
-    for i, st in enumerate(steps):
-        if not isinstance(st, dict) or not isinstance(st.get("task"), str) or not 20 <= len(st["task"]) <= 2000:
+    if not isinstance(steps, list) or not steps:
+        return None, "the plan must be a list of steps"
+    clean = []
+    for st in steps:
+        if not isinstance(st, dict) or not isinstance(st.get("task"), str) or len(st["task"].strip()) < 20:
             return None, "every step needs a concrete task"
-        a = st.get("agent")
-        last = i == len(steps) - 1
-        if last != (a == "reporter"):
-            return None, "the reporter must be the last step, and only the last"
-        if a == "researcher":
+        clean.append({"agent": _agent_name(st.get("agent")), "task": st["task"].strip()[:2000]})
+    reporters = [c for c in clean if c["agent"] == "reporter"]
+    clean = [c for c in clean if c["agent"] != "reporter"]
+    clean.append(reporters[-1] if reporters else
+                 {"agent": "reporter", "task": "Write the executive brief for the goal from the verified results."})
+    if not 2 <= len(clean) <= 4:
+        return None, "the plan must have 1 to 3 specialist steps before the reporter"
+    seen_analyst, analyst_ok = False, has_files
+    for c in clean[:-1]:
+        if c["agent"] == "researcher":
             if not has_sites or seen_analyst:
                 return None, "the researcher needs allowed websites and must come before the analyst"
             analyst_ok = True
-        elif a == "analyst":
+        elif c["agent"] == "analyst":
             if not analyst_ok:
                 return None, "the analyst needs files or a researcher step first"
             seen_analyst = True
-        elif a != "reporter":
-            return None, f"unknown agent {a!r}"
-        clean.append({"agent": a, "task": st["task"].strip()})
-    if len(clean) < 2:
-        return None, "the plan needs a specialist before the reporter"
+        else:
+            return None, f"unknown agent {c['agent']!r}; use researcher, analyst or reporter"
     return clean, ""
 
 
