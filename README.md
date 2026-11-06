@@ -55,7 +55,7 @@ Two CSV files go in: Q3 invoices and payments. A lead agent plans the job, the a
 
 <img src="docs/media/demo-mission.gif" alt="Live invoice reconciliation mission: lead agent plans, analyst runs code in the sandbox, auditor verifies every count, reporter writes the collections brief, receipts print" width="800">
 
-The sample data hides eight problems. The team found all of them in about two minutes:
+The sample data hides six kinds of problem across nine invoices and payments. The team found every one in about two minutes:
 
 | Planted problem | Found |
 | --- | --- |
