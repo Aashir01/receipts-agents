@@ -222,7 +222,7 @@ def parse(result: dict, canary: dict) -> dict:
         "trips": trip_list,
         "leaked_into": leaks,
         "network": [r for r in reports if r.get("kind") in ("network", "dns", "http")][:20],
-        "processes": [r for r in reports if r.get("kind") == "process" and not r.get("library")][:10],
+        "processes": [r for r in reports if r.get("kind") == "process" and not r.get("library")][:200],
         "read": summary.get("read", []),
         "wrote": summary.get("wrote", []),
     }

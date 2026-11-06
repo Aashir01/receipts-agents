@@ -117,16 +117,20 @@ report(not left, 'Second job found: ' + (', '.join(left) if left else 'nothing. 
 """},
     {"id": "fork_bomb", "title": "Fork bomb",
      "threat": "Starts processes until the machine falls over.",
-     "code": _R + """import os
+     "code": _R + """import os, sys, time
+print('starting the fork bomb', flush=True)
 n = 0
 try:
     for _ in range(10000):
-        if os.fork() == 0:
-            import time; time.sleep(5); os._exit(0)
+        pid = os.fork()
+        if pid == 0:
+            time.sleep(3)
+            os._exit(0)
         n += 1
     report(False, f'{n} processes started')
-except Exception as e:
+except BaseException as e:
     report(True, f'Stopped after {n} processes: {type(e).__name__} (process limit 64)')
+sys.stdout.flush()
 """, "timeout_s": 10},
     {"id": "memory_bomb", "title": "Memory bomb",
      "threat": "Allocates memory until the server runs out.",
@@ -172,6 +176,10 @@ def grade(attack: dict, res: dict, rec: dict | None, real_secrets: list[str]) ->
         contained, detail = bool(said.get("contained")), str(said.get("detail", ""))[:300]
     else:
         contained, detail = st != "ok", (res.get("stderr") or "").strip().splitlines()[-1:][0][:200] if (res.get("stderr") or "").strip() else st
+    if attack["id"] == "fork_bomb" and not said and st in ("error", "oom_killed", "timeout"):
+        contained = True
+        detail = (f"The process limit cut it off: the job ended after {res.get('duration_s', '?')} s with exit code "
+                  f"{res.get('exit_code')}, and the executor kept running the other attacks")
     tripped = bool(rec and rec.get("tripped"))
     if attack["id"] in ("env_secrets", "ssh_key"):
         contained = not leaked_real

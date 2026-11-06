@@ -175,9 +175,13 @@ async def run_in_sandbox(code: str, files: list[dict], job_id: str | None = None
             where = n.get("target") or n.get("host") or n.get("url")
             _event(res, "attempt", f"Tried to reach {where}" + (f" (line {n['line']})" if n.get("line") else "")
                    + ": there is no network")
+        seen: dict = {}
         for pr in rec["processes"]:
-            _event(res, "attempt", f"Tried to start a process {pr.get('cmd', '')[:80]}"
-                   + (f" (line {pr['line']})" if pr.get("line") else ""))
+            seen.setdefault((pr.get("what"), pr.get("cmd"), pr.get("line")), []).append(pr)
+        for (what, cmd, ln), prs in seen.items():
+            label = "fork a new process" if what == "os.fork" else f"start a process {(cmd or '')[:80]}"
+            _event(res, "attempt", f"Tried to {label}" + (f" {len(prs)} times" if len(prs) > 1 else "")
+                   + (f" (line {ln})" if ln else ""))
         if rec["tripped"]:
             _event(res, "tripped", "Canary tripwire: " + harness.describe_trip(rec))
     texts = [res.get("stdout") or "", res.get("stderr") or ""]
