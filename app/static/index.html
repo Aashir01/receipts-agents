@@ -1524,7 +1524,6 @@ function handle(ev, tl, steps) {
     const ul = el("ul", "findings"); (ev.findings || []).forEach(f => ul.append(el("li", null, f))); li.append(ul);
     tl.append(li); printPolicy(ev);
   } else if (ev.type === "privacy") {
-    if (nested) return;
     const li = el("li", "step done");
     const k = ev.kinds || {};
     const parts = Object.entries(k).map(([n, c]) => `${c} ${n === "name" ? "name" : n}${c === 1 ? "" : "s"}`);

@@ -606,6 +606,23 @@ async def ask(body: Ask, request: Request):
         a_rid, _ = await store.save_receipt(kind="verification", code=acode, result=ares, model=arep["model"],
                                             run_id=rec.id, dataset=ds, attempt=3, preflight=apre)
         got = verify.parse_recomputed(ares["stdout"]) if ares["status"] == "ok" else {}
+        missing = [q["name"] for q in qs if got.get(q["name"]) is None]
+        if missing:                                   # one retry, like the auditor gets
+            arep2 = await mchat(amsgs + [{"role": "assistant", "content": f"```python\n{acode}\n```"},
+                                         {"role": "user", "content": prompts.FIX_USER.format(
+                                             status=ares["status"], exit_code=ares["exit_code"],
+                                             stderr=(ares["stderr"].strip()[-1500:] or
+                                                     "The last line must be ONE JSON object with exactly these names: "
+                                                     + ", ".join(missing)))}],
+                                max_tokens=12000, code=True, temperature=0.4)
+            acode2 = llm.extract_code(arep2["text"])
+            if not any(f["severity"] == "block" for f in guard.scan_code(acode2)):
+                ares2 = await sandbox(acode2, "arbiter")
+                await store.save_receipt(kind="verification", code=acode2, result=ares2, model=arep2["model"],
+                                         run_id=rec.id, dataset=ds, attempt=4, preflight=apre)
+                if ares2["status"] == "ok":
+                    got.update({k: v for k, v in verify.parse_recomputed(ares2["stdout"]).items() if v is not None})
+                    acode, ares = acode2, ares2
         for c in bad:
             try:
                 v = float(got.get(c["name"])) if got.get(c["name"]) is not None else None
@@ -1250,6 +1267,8 @@ async def _forward(mission_id: str, step: int, agent: str, resp, sink: dict):
                 sink["verified"] = ev.get("status")
             elif t == "web_verify":
                 sink["verified"] = ev.get("status")
+            elif t == "privacy":
+                sink["privacy"] = ev
             elif t == "records" and ev.get("dataset"):
                 sink["dataset"] = ev["dataset"]
             elif t == "done":
@@ -1388,7 +1407,8 @@ async def mission_run(body: MissionReq, request: Request):
             if st["agent"] == "researcher":
                 web_ds = sink.get("dataset")
             reports.append({"step": i, "agent": st["agent"], "task": task, "status": sink["status"],
-                            "answer": sink.get("answer") or sink.get("error") or "", "verified": sink.get("verified")})
+                            "answer": sink.get("answer") or sink.get("error") or "", "verified": sink.get("verified"),
+                            "privacy": sink.get("privacy")})
             yield {"type": "agent_done", "step": i, "agent": st["agent"], "status": sink["status"],
                    "verified": sink.get("verified"), "child_run": sink.get("run_id"), "error": sink.get("error")}
             if st["agent"] == "researcher" and not web_ds:
@@ -1411,7 +1431,14 @@ async def mission_run(body: MissionReq, request: Request):
         yield {"type": "answer", "markdown": rep["text"], "model": rep["model"], "grounded_in_job": None,
                "receipt_id": None, "verified": overall, "mission": True,
                "specialists": [{k: r[k] for k in ("step", "agent", "status", "verified")} for r in reports]}
-        yield {"type": "privacy", **mmask.stats(), "scope": "lead agent and reporter"}
+        total = mmask.stats()
+        for r in reports:
+            p = r.get("privacy") or {}
+            total["values"] += p.get("values", 0)
+            total["replacements"] += p.get("replacements", 0)
+            for k, v in (p.get("kinds") or {}).items():
+                total["kinds"][k] = total["kinds"].get(k, 0) + v
+        yield {"type": "privacy", **total, "scope": "across the whole team"}
         yield {"type": "done", "total_s": round(time.monotonic() - started, 2), "status": "done" if ok else "failed",
                "run_id": rec.id, "saved": db.ENABLED, "verified": overall}
 
