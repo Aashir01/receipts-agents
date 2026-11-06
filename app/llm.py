@@ -96,6 +96,12 @@ async def chat(messages: list[dict], max_tokens: int = 4000, temperature: float 
                     else:
                         raise
                 text, finish, info = _answer_text(data)
+                if text and finish == "length" and budget < min(MAX_TOKENS_CAP, _limit.get(model, MAX_TOKENS_CAP)):
+                    # cut off mid-answer: a partial script or JSON is worse than a slower full one
+                    print(f"[llm] {model}: answer cut off at {budget} tokens; retrying with more", flush=True)
+                    errors.append(f"{model}: cut off at {budget} tokens")
+                    budget = min(budget * 2, MAX_TOKENS_CAP)
+                    continue
                 if text:
                     return {"text": text, "model": model,
                             "latency_s": round(time.monotonic() - start, 2),
@@ -124,6 +130,17 @@ def strip_thinking(text: str) -> str:
 
 
 _PLACEHOLDER = re.compile(r"^\s*\.\.\.\s*(#.*)?$|=\s*\.\.\.\s*(#.*)?$|[\[(,]\s*\.\.\.\s*[\])]|^\s*#\s*\.\.\.", re.M)
+
+
+def incomplete(code: str) -> bool:
+    """True when the script does not even parse, e.g. a reply cut off mid-line."""
+    try:
+        compile(code, "main.py", "exec", dont_inherit=True)      # parse only; nothing runs here
+        return False
+    except SyntaxError:
+        return True
+    except Exception:  # noqa: BLE001
+        return False
 
 
 def has_placeholders(code: str) -> bool:

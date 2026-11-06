@@ -715,14 +715,17 @@ async def ask(body: Ask, request: Request):
                    "title": "Writing code" if attempt == 1 else f"Fixing code (attempt {attempt})"}
             reply = await mchat(messages, max_tokens=16000, code=True)
             code, model = llm.extract_code(reply["text"]), reply["model"]
-            for _ in range(2):                            # a sketch with "..." gaps never reaches the sandbox
-                if not llm.has_placeholders(code):
+            for _ in range(2):                            # a sketch with "..." gaps or a cut-off draft never reaches the sandbox
+                gaps, cut = llm.has_placeholders(code), llm.incomplete(code)
+                if not gaps and not cut:
                     break
                 yield {"type": "step", "id": f"code{attempt}", "status": "running",
-                       "title": "The draft had '...' gaps; asking for the complete script"}
+                       "title": "The draft had '...' gaps; asking for the complete script" if gaps
+                       else "The draft was cut off mid-script; asking for the complete script"}
                 reply = await mchat(messages + [
                     {"role": "assistant", "content": f"```python\n{code}\n```"},
-                    {"role": "user", "content": "That script has '...' placeholders, so it cannot run. Write the "
+                    {"role": "user", "content": ("That script has '...' placeholders, so it cannot run. " if gaps else
+                     "That script stops mid-line and does not parse. ") + "Write the "
                      "complete script with every line filled in, and keep it under 120 lines."}], max_tokens=16000, code=True)
                 code, model = llm.extract_code(reply["text"]), reply["model"]
             yield {"type": "code", "attempt": attempt, "code": code, "model": model, "latency_s": reply["latency_s"]}
