@@ -21,6 +21,8 @@ Write ONE complete Python script that answers the user's question about their fi
 Rules:
 - The script must be self-contained: import everything and load the file with pandas ({loader}) at the top.
 - Write every line in full. Never use ... or placeholders, and never leave a step for later.
+- Use every column that changes the answer (for example stock already on order, lead times,
+  refunds, discounts or currencies). If you leave a relevant column out, print why.
 - Keep it focused: at most about 120 lines and 4 charts. For a broad request such as a full EDA,
   cover shape and types, missing values, summary statistics, the main categories, correlations
   between numeric columns and the trend over time, and print the results.
