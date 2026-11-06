@@ -164,11 +164,27 @@ def _hourly_ok() -> bool:
     return len(_created_at) < PER_HOUR
 
 
+def _snap_tag(snapshot_id: str) -> str:
+    return f"snap-{snapshot_id}"
+
+
+async def _current_snap_tag() -> str | None:
+    """Tag of the snapshot new standbys boot from, or None if it can't be read right now."""
+    try:
+        return _snap_tag((await template())["snapshot_id"])
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _is_current(inst: dict, cur: str | None) -> bool:
+    return cur is None or cur in (inst.get("tags") or [])
+
+
 async def create_standby() -> dict:
     t = await template()
     label = f"rcpt-{secrets.token_hex(4)}"
     body = {"region": t["region"], "plan": t["plan"], "snapshot_id": t["snapshot_id"], "label": label,
-            "hostname": label, "tags": [STANDBY_TAG], "attach_vpc": t["vpcs"],
+            "hostname": label, "tags": [STANDBY_TAG, _snap_tag(t["snapshot_id"])], "attach_vpc": t["vpcs"],
             "backups": "disabled", "enable_ipv6": False,
             "user_data": base64.b64encode(user_data(token_for(label), t["template_ip"]).encode()).decode()}
     if t["firewall_group_id"]:
@@ -206,7 +222,9 @@ async def claim(run_id: str) -> tuple[dict | None, str]:
         except VMError as e:
             return None, str(e)
         booting = 0
-        for inst in sorted(standby, key=lambda i: i.get("date_created", "")):
+        cur = await _current_snap_tag()
+        # VMs from the newest snapshot first; an older one is still used rather than none
+        for inst in sorted(standby, key=lambda i: (not _is_current(i, cur), i.get("date_created", ""))):
             if not await _runner_ok(inst):
                 booting += 1
                 continue
@@ -284,7 +302,10 @@ async def _maintain() -> dict:
                 await destroy(inst["id"])
                 print(f"[watchdog] deleted claimed VM {inst['label']} (older than {MAX_AGE_MIN} min)", flush=True)
         standby = await _list(STANDBY_TAG)
-        ready, booting = 0, 0
+        cur = await _current_snap_tag()
+        old = [i for i in standby if not _is_current(i, cur)]       # booted from an older snapshot
+        standby = [i for i in standby if _is_current(i, cur)]
+        ready, booting, old_ready = 0, 0, 0
         for inst in sorted(standby, key=lambda i: i.get("date_created", "")):
             if _age_min(inst) > STANDBY_MAX_H * 60 or ready + booting >= POOL_SIZE:
                 await destroy(inst["id"])
@@ -303,11 +324,19 @@ async def _maintain() -> dict:
                     print(f"[watchdog] {STATUS['last_error']} ({inst['label']})", flush=True)
                     continue
             booting += 1
+        for inst in old:
+            # Keep an old-snapshot VM only until a VM from the newest snapshot is ready to replace it.
+            if ready >= POOL_SIZE or _age_min(inst) > STANDBY_MAX_H * 60 or not await _runner_ok(inst):
+                await destroy(inst["id"])
+                print(f"[watchdog] deleted standby VM {inst['label']}: replaced by one from the newest snapshot", flush=True)
+            else:
+                old_ready += 1
         if ready + booting < POOL_SIZE and STATUS["fails"] < 2 and _hourly_ok():
             inst = await create_standby()
             booting += 1
             print(f"[watchdog] booting standby VM {inst['label']} from the executor snapshot", flush=True)
-        STATUS.update(ready=ready, booting=booting, claimed=len(LIVE), checked=int(time.time()))
+        STATUS.update(ready=ready + old_ready, booting=booting, claimed=len(LIVE), checked=int(time.time()),
+                      old_snapshot=old_ready)
     except Exception as e:  # noqa: BLE001
         STATUS["last_error"] = f"{type(e).__name__}: {str(e)[:200]}"
         print(f"[watchdog] {STATUS['last_error']}", flush=True)
