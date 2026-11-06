@@ -212,7 +212,9 @@ Pick ONLY deterministic facts that anyone can recompute from the raw data the sa
 counts, sums, averages, minimums/maximums, ratios and growth rates of columns.
 NEVER pick heuristic or judgment-based numbers such as keyword or pattern-match counts,
 risk scores, sentiment, "indicators detected", or anything depending on chosen rules.
-If no deterministic number answers the question, return []."""
+If no deterministic number answers the question, return [].
+Name each number by what it measures (for example top_customer_spend_1), never by a person's name, an
+email, or any other value from the data; put which row it is about in the definition instead."""
 
 VERIFY_SYSTEM = """You are an independent auditor. Recompute the requested quantities from
 the raw file WITHOUT seeing anyone else's code or results.

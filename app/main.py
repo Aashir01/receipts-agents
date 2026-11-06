@@ -643,10 +643,15 @@ async def ask(body: Ask, request: Request):
             verification["settled"] = "split"
         verification["arbiter"] = {"model": arep["model"], "code": acode, "receipt_id": a_rid if db.ENABLED else None,
                                    "job_id": ares["job_id"], "status": ares["status"]}
+        why = None
+        if verification["settled"] == "split":
+            err = (ares.get("stderr") or "").strip().splitlines()
+            why = ("The arbiter's own script failed: " + err[-1][:200]) if ares["status"] != "ok" and err else \
+                  "The arbiter's number matched neither key, so the figure stays unconfirmed."
         yield {"type": "step", "id": "arbiter", "status": "done",
                "title": {"analysis": "Arbiter sided with the analysis", "auditor": "Arbiter sided with the auditor",
                          "split": "The arbiter could not settle it"}[verification["settled"]],
-               "model": arep["model"], "latency_s": arep["latency_s"]}
+               "model": arep["model"], "latency_s": arep["latency_s"], **({"content": why} if why else {})}
         yield {"type": "arbiter_receipt", "receipt": receipt(acode, ares, arep["model"], apre),
                "events": ares["events"], "limits": ares["limits"]}
 
