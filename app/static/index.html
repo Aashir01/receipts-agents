@@ -1388,7 +1388,7 @@ function handle(ev, tl, steps) {
       : ev.status === "verified" ? "Two-key verification: verified"
       : ev.settled === "auditor" ? "Three keys: the arbiter sided with the auditor"
       : ev.status === "mismatch" ? "Two-key verification: mismatch found" : "Two-key verification: inconclusive"));
-    if (ev.settled) li.append(el("div", "sub", "The first two keys disagreed, so a third independent run, on a different model with a different method, recomputed the disputed numbers."));
+    if (ev.settled) li.append(el("div", "sub", "The first two keys disagreed, so a third independent run, written from scratch with a different method, recomputed the disputed numbers."));
     li.append(el("div", "sub", ev.status === "verified"
       ? "A second script, written separately without seeing the analysis, recomputed the headline numbers in a fresh sandbox and got the same values."
       : ev.status === "mismatch" ? "An independent recomputation disagrees. The answer below flags it instead of presenting it as fact."

@@ -587,7 +587,7 @@ async def ask(body: Ask, request: Request):
         return res
 
     async def arbitrate(verification: dict, quantities: list[dict], q_safety: dict, data_flags: list):
-        """Two keys disagree: a third, independent run on a different model settles each number."""
+        """Two keys disagree: a third run, written from scratch with a different method, settles each number."""
         bad = [c for c in verification["checks"] if not c["match"]]
         qs = [q for q in quantities if q["name"] in {c["name"] for c in bad}]
         if not qs:
@@ -596,7 +596,7 @@ async def ask(body: Ask, request: Request):
                "title": f"The two keys disagree: an arbiter recomputes {len(qs)} number{'s' if len(qs) > 1 else ''} a third way"}
         amsgs = prompts.arbiter_messages(body.question, ds.get("files_label", ds["filename"]), ds["profile"], qs,
                                          RUN_TIMEOUT_S, RUN_MEMORY_MB)
-        arep = await mchat(amsgs, max_tokens=12000)              # main model first: not the auditor's model
+        arep = await mchat(amsgs, max_tokens=12000, code=True, temperature=0.4)   # fresh code, a different method
         acode = llm.extract_code(arep["text"])
         if any(f["severity"] == "block" for f in guard.scan_code(acode)):
             yield {"type": "step", "id": "arbiter", "status": "failed", "title": "The arbiter's code wanted risky access; not run"}
