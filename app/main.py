@@ -1348,6 +1348,9 @@ async def mission_run(body: MissionReq, request: Request):
         else:
             lead = await mchat(missions.lead_messages(body.mission, goal, inputs), max_tokens=8000)
             plan, brief, from_model = missions.accept_plan(body.mission, research.parse_json(lead["text"]), inputs)
+            if not from_model:
+                print("[mission] lead draft not used:", lead["model"], lead.get("finish_reason"),
+                      lead["text"][:600].replace("\n", " "), flush=True)
         yield {"type": "step", "id": "lead", "status": "done", "title": f"Lead agent planned {len(plan)} steps",
                "model": lead["model"], "latency_s": lead["latency_s"]}
         yield {"type": "mission_plan", "title": t["title"], "for": t["for"], "brief": brief, "from_model": from_model,

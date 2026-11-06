@@ -58,16 +58,28 @@ DOMAIN_RE = re.compile(r"^(?=.{1,253}$)[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z
 
 
 def parse_json(text: str) -> dict | None:
-    """First balanced-looking JSON object in a reply."""
+    """The JSON object in a model reply, forgiving the usual slips: code fences, literal line breaks
+    inside strings, trailing commas, and prose before or after the object."""
     start = text.find("{")
     end = text.rfind("}")
     if start < 0 or end <= start:
         return None
-    try:
-        data = json.loads(text[start:end + 1])
-        return data if isinstance(data, dict) else None
-    except json.JSONDecodeError:
-        return None
+    body = text[start:end + 1]
+    for candidate in (body, re.sub(r",\s*([}\]])", r"\1", body)):
+        try:
+            data = json.loads(candidate, strict=False)
+            return data if isinstance(data, dict) else None
+        except json.JSONDecodeError:
+            pass
+    tail = text[start:]
+    for candidate in (tail, re.sub(r",\s*([}\]])", r"\1", tail)):   # first complete object, junk after it ignored
+        try:
+            data, _ = json.JSONDecoder(strict=False).raw_decode(candidate)
+            return data if isinstance(data, dict) else None
+        except json.JSONDecodeError:
+            pass
+    print("[parse_json] could not parse:", text[:300].replace("\n", " "), flush=True)
+    return None
 
 
 def clean_domains(items) -> list[str]:
