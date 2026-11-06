@@ -433,7 +433,7 @@ async def ask(body: Ask, request: Request):
 
         # 1. Plan
         yield {"type": "step", "id": "plan", "status": "running", "title": "Planning"}
-        plan = await llm.chat(prompts.plan_messages(body.question, ds.get("files_label", ds["filename"]), ds["profile"]), max_tokens=3000)
+        plan = await llm.chat(prompts.plan_messages(body.question, ds.get("files_label", ds["filename"]), ds["profile"]), max_tokens=6000)
         yield {"type": "step", "id": "plan", "status": "done", "title": "Plan",
                "content": plan["text"], "model": plan["model"], "latency_s": plan["latency_s"]}
         check_stop()
@@ -442,7 +442,7 @@ async def ask(body: Ask, request: Request):
         yield {"type": "stage", "stage": "explore", "title": "Stage 1 of 3: explore the data"}
         findings_text = ""
         exp = await llm.chat(prompts.explore_messages(body.question, ds.get("files_label", ds["filename"]), ds["profile"],
-                                                      RUN_TIMEOUT_S, RUN_MEMORY_MB), max_tokens=4000)
+                                                      RUN_TIMEOUT_S, RUN_MEMORY_MB), max_tokens=8000)
         exp_code = llm.extract_code(exp["text"])
         exp_scan = [f for f in guard.scan_code(exp_code) if f["severity"] == "block"]
         if exp_scan:
@@ -476,7 +476,7 @@ async def ask(body: Ask, request: Request):
         for attempt in range(1, MAX_ATTEMPTS + 1):
             yield {"type": "step", "id": f"code{attempt}", "status": "running",
                    "title": "Writing code" if attempt == 1 else f"Fixing code (attempt {attempt})"}
-            reply = await llm.chat(messages, max_tokens=12000, code=True)
+            reply = await llm.chat(messages, max_tokens=16000, code=True)
             code, model = llm.extract_code(reply["text"]), reply["model"]
             for _ in range(2):                            # a sketch with "..." gaps never reaches the sandbox
                 if not llm.has_placeholders(code):
@@ -486,7 +486,7 @@ async def ask(body: Ask, request: Request):
                 reply = await llm.chat(messages + [
                     {"role": "assistant", "content": f"```python\n{code}\n```"},
                     {"role": "user", "content": "That script has '...' placeholders, so it cannot run. Write the "
-                     "complete script with every line filled in, and keep it under 120 lines."}], max_tokens=12000, code=True)
+                     "complete script with every line filled in, and keep it under 120 lines."}], max_tokens=16000, code=True)
                 code, model = llm.extract_code(reply["text"]), reply["model"]
             yield {"type": "code", "attempt": attempt, "code": code, "model": model, "latency_s": reply["latency_s"]}
 
@@ -554,7 +554,7 @@ async def ask(body: Ask, request: Request):
             yield {"type": "stage", "stage": "verify", "title": "Stage 3 of 3: independent verification"}
             yield {"type": "step", "id": "verify", "status": "running", "title": "Picking the headline numbers to verify"}
             try:
-                ext = await llm.chat(prompts.extract_messages(body.question, result["stdout"]), max_tokens=2000)
+                ext = await llm.chat(prompts.extract_messages(body.question, result["stdout"]), max_tokens=4000)
                 yield {"type": "step", "id": "verify", "status": "running",
                        "title": f"Picked the numbers to verify ({ext['model']}, {ext['latency_s']} s)"}
                 quantities = verify.parse_quantities(ext["text"], result["stdout"])
@@ -565,7 +565,7 @@ async def ask(body: Ask, request: Request):
                     vmsgs = prompts.verify_messages(body.question, ds.get("files_label", ds["filename"]), ds["profile"], quantities,
                                                     RUN_TIMEOUT_S, RUN_MEMORY_MB)
                     for vtry in (1, 2):
-                        vrep = await llm.chat(vmsgs, max_tokens=8000, code=True)
+                        vrep = await llm.chat(vmsgs, max_tokens=12000, code=True)
                         vcode = llm.extract_code(vrep["text"])
                         if any(f["severity"] == "block" for f in guard.scan_code(vcode)):
                             verification = {"status": "inconclusive", "checks": [],
@@ -600,7 +600,7 @@ async def ask(body: Ask, request: Request):
             yield {"type": "step", "id": "explain", "status": "running", "title": "Writing answer"}
             try:
                 ans = await llm.chat(prompts.explain_messages_verified(body.question, code, result["stdout"],
-                                                                       result["outputs"], verification), max_tokens=3000)
+                                                                       result["outputs"], verification), max_tokens=6000)
             except llm.LLMError as e:
                 print("[explain]", str(e)[:300], flush=True)
                 ans = {"model": None, "text": "The model could not write a summary this time, so here is the sandbox's "
@@ -758,7 +758,7 @@ async def research_run(body: Research, request: Request):
         source = "you" if domains else "agent"
         hint = f"\nThe user allows only these domains: {', '.join(domains)}" if domains else ""
         sc = await llm.chat([{"role": "system", "content": research.SCOPE_SYSTEM},
-                             {"role": "user", "content": f"Goal: {body.goal}{hint}"}], max_tokens=1500)
+                             {"role": "user", "content": f"Goal: {body.goal}{hint}"}], max_tokens=3000)
         sj = research.parse_json(sc["text"]) or {}
         if not domains:
             domains = research.clean_domains(sj.get("domains"))
@@ -798,7 +798,7 @@ async def research_run(body: Research, request: Request):
         for turn in range(1, research.MAX_TURNS + 1):
             check_stop()
             yield {"type": "step", "id": f"plan{turn}", "status": "running", "title": f"Planning browser turn {turn}"}
-            reply = await llm.chat(messages, max_tokens=6000)
+            reply = await llm.chat(messages, max_tokens=8000)
             model = reply["model"]
             plan = research.parse_json(reply["text"])
             if not plan:
@@ -881,7 +881,7 @@ async def research_run(body: Research, request: Request):
         if not final:
             reply = await llm.chat(messages + [{"role": "user", "content":
                                    "Stop browsing. Finish now with done:true using only what you already extracted."}],
-                                   max_tokens=6000)
+                                   max_tokens=8000)
             final = research.parse_json(reply["text"]) or {}
             final.setdefault("answer", "The agent could not finish within the step limit.")
 
@@ -1029,7 +1029,7 @@ async def mission_run(body: MissionReq, request: Request):
         yield {"type": "step", "id": "lead", "status": "running", "title": "Lead agent is planning the mission"}
         if custom:
             msgs = missions.custom_lead_messages(goal, inputs)
-            lead = await llm.chat(msgs, max_tokens=5000)
+            lead = await llm.chat(msgs, max_tokens=8000)
             reply = research.parse_json(lead["text"]) or {}
             plan, why = missions.accept_custom_plan(reply, bool(files), bool(domains))
             if not plan:                                   # one chance to fix it, with the reason
@@ -1037,7 +1037,7 @@ async def mission_run(body: MissionReq, request: Request):
                        "title": f"Lead agent's plan was rejected ({why}); asking it to fix the plan"}
                 lead = await llm.chat(msgs + [{"role": "assistant", "content": lead["text"][:3000]},
                                               {"role": "user", "content": f"That plan breaks a rule: {why}. Return a corrected plan."}],
-                                      max_tokens=5000)
+                                      max_tokens=8000)
                 reply = research.parse_json(lead["text"]) or {}
                 plan, why = missions.accept_custom_plan(reply, bool(files), bool(domains))
             from_model = plan is not None
@@ -1049,7 +1049,7 @@ async def mission_run(body: MissionReq, request: Request):
                         {"agent": "reporter", "task": "Write the brief for the goal."}]
                 brief = brief or "The team will collect what it needs, compute the answer and brief you."
         else:
-            lead = await llm.chat(missions.lead_messages(body.mission, goal, inputs), max_tokens=5000)
+            lead = await llm.chat(missions.lead_messages(body.mission, goal, inputs), max_tokens=8000)
             plan, brief, from_model = missions.accept_plan(body.mission, research.parse_json(lead["text"]), inputs)
         yield {"type": "step", "id": "lead", "status": "done", "title": f"Lead agent planned {len(plan)} steps",
                "model": lead["model"], "latency_s": lead["latency_s"]}
@@ -1098,7 +1098,7 @@ async def mission_run(body: MissionReq, request: Request):
         check_stop()
         rstep = len(plan)
         yield {"type": "agent_start", "step": rstep, "agent": "reporter", "task": plan[-1]["task"]}
-        rep = await llm.chat(missions.reporter_messages(body.mission, goal, reports), max_tokens=5000)
+        rep = await llm.chat(missions.reporter_messages(body.mission, goal, reports), max_tokens=8000)
         statuses = [r["verified"] for r in reports if r.get("verified")]
         overall = ("mismatch" if "mismatch" in statuses else "verified" if "verified" in statuses
                    else "inconclusive" if statuses else None)

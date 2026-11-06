@@ -22,14 +22,17 @@ MODEL_FALLBACK = os.environ.get("MODEL_FALLBACK", "deepseek-v4.1-flash-1017")
 # Code writing goes to the model that answers code tasks fastest without exhausting its budget on
 # hidden reasoning; the other model is the fallback.
 MODEL_CODE = os.environ.get("MODEL_CODE", MODEL_FALLBACK)
-MAX_TOKENS_CAP = int(os.environ.get("LLM_MAX_TOKENS_CAP", "16000"))
+MAX_TOKENS_CAP = int(os.environ.get("LLM_MAX_TOKENS_CAP", "32768"))
 # Optional extra request fields, e.g. LLM_EXTRA_JSON={"reasoning_effort":"low"}
 try:
     EXTRA_BODY = json.loads(os.environ.get("LLM_EXTRA_JSON", "") or "{}")
 except json.JSONDecodeError:
     EXTRA_BODY = {}
 
-_client = httpx.AsyncClient(timeout=httpx.Timeout(float(os.environ.get("LLM_TIMEOUT_S", "60")), connect=10))
+_client = httpx.AsyncClient(timeout=httpx.Timeout(float(os.environ.get("LLM_TIMEOUT_S", "240")), connect=10))
+
+
+_limit: dict[str, int] = {}  # per-model output limit learned from HTTP 400 replies
 
 
 class LLMError(RuntimeError):
@@ -81,7 +84,17 @@ async def chat(messages: list[dict], max_tokens: int = 4000, temperature: float 
         for _ in range(2):
             start = time.monotonic()
             try:
-                data = await _call(model, messages, budget, temperature)
+                budget = min(budget, _limit.get(model, budget))
+                try:
+                    data = await _call(model, messages, budget, temperature)
+                except LLMError as e:
+                    # A budget above what this model allows comes back as HTTP 400: halve it and retry.
+                    if "HTTP 400" in str(e) and "token" in str(e).lower() and budget > 4000:
+                        budget //= 2
+                        _limit[model] = budget
+                        data = await _call(model, messages, budget, temperature)
+                    else:
+                        raise
                 text, finish, info = _answer_text(data)
                 if text:
                     return {"text": text, "model": model,
@@ -90,7 +103,7 @@ async def chat(messages: list[dict], max_tokens: int = 4000, temperature: float 
                 msg = f"{model}: empty answer (finish={finish}, usage={info['usage']}, fields={info['fields']})"
                 print("[llm]", msg, flush=True)
                 errors.append(msg)
-                if finish == "length" and budget < MAX_TOKENS_CAP:
+                if finish == "length" and budget < min(MAX_TOKENS_CAP, _limit.get(model, MAX_TOKENS_CAP)):
                     budget = min(budget * 2, MAX_TOKENS_CAP)
                     continue
                 break
