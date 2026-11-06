@@ -19,6 +19,9 @@ BASE_URL = os.environ.get("INFERENCE_BASE_URL", "https://api.vultrinference.com/
 API_KEY = os.environ.get("VULTR_INFERENCE_API_KEY", "")
 MODEL_MAIN = os.environ.get("MODEL_MAIN", "minimax-m3.1-flash")
 MODEL_FALLBACK = os.environ.get("MODEL_FALLBACK", "deepseek-v4.1-flash-1017")
+# Code writing goes to the model that answers code tasks fastest without exhausting its budget on
+# hidden reasoning; the other model is the fallback.
+MODEL_CODE = os.environ.get("MODEL_CODE", MODEL_FALLBACK)
 MAX_TOKENS_CAP = int(os.environ.get("LLM_MAX_TOKENS_CAP", "16000"))
 # Optional extra request fields, e.g. LLM_EXTRA_JSON={"reasoning_effort":"low"}
 try:
@@ -62,13 +65,19 @@ def _answer_text(data: dict) -> tuple[str, str, dict]:
     return text, finish, info
 
 
-async def chat(messages: list[dict], max_tokens: int = 4000, temperature: float = 0.2) -> dict:
-    """Call the main model (retrying once with a bigger budget if cut off), then the fallback."""
+async def chat(messages: list[dict], max_tokens: int = 4000, temperature: float = 0.2,
+               code: bool = False) -> dict:
+    """Call the main model (retrying once with a bigger budget if cut off), then the fallback.
+
+    code=True puts MODEL_CODE first. A fallback starts at the biggest budget already tried."""
     if not API_KEY:
         raise LLMError("VULTR_INFERENCE_API_KEY is not set")
     errors = []
-    for model in (MODEL_MAIN, MODEL_FALLBACK):
-        budget = min(max_tokens, MAX_TOKENS_CAP)
+    order = (MODEL_MAIN, MODEL_FALLBACK)
+    if code:
+        order = (MODEL_CODE,) + tuple(m for m in order if m != MODEL_CODE)
+    budget = min(max_tokens, MAX_TOKENS_CAP)
+    for model in order:
         for _ in range(2):
             start = time.monotonic()
             try:

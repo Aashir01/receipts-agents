@@ -476,7 +476,7 @@ async def ask(body: Ask, request: Request):
         for attempt in range(1, MAX_ATTEMPTS + 1):
             yield {"type": "step", "id": f"code{attempt}", "status": "running",
                    "title": "Writing code" if attempt == 1 else f"Fixing code (attempt {attempt})"}
-            reply = await llm.chat(messages, max_tokens=12000)
+            reply = await llm.chat(messages, max_tokens=12000, code=True)
             code, model = llm.extract_code(reply["text"]), reply["model"]
             for _ in range(2):                            # a sketch with "..." gaps never reaches the sandbox
                 if not llm.has_placeholders(code):
@@ -486,7 +486,7 @@ async def ask(body: Ask, request: Request):
                 reply = await llm.chat(messages + [
                     {"role": "assistant", "content": f"```python\n{code}\n```"},
                     {"role": "user", "content": "That script has '...' placeholders, so it cannot run. Write the "
-                     "complete script with every line filled in, and keep it under 120 lines."}], max_tokens=12000)
+                     "complete script with every line filled in, and keep it under 120 lines."}], max_tokens=12000, code=True)
                 code, model = llm.extract_code(reply["text"]), reply["model"]
             yield {"type": "code", "attempt": attempt, "code": code, "model": model, "latency_s": reply["latency_s"]}
 
@@ -553,47 +553,58 @@ async def ask(body: Ask, request: Request):
             check_stop()
             yield {"type": "stage", "stage": "verify", "title": "Stage 3 of 3: independent verification"}
             yield {"type": "step", "id": "verify", "status": "running", "title": "Picking the headline numbers to verify"}
-            ext = await llm.chat(prompts.extract_messages(body.question, result["stdout"]), max_tokens=2000)
-            yield {"type": "step", "id": "verify", "status": "running",
-                   "title": f"Picked the numbers to verify ({ext['model']}, {ext['latency_s']} s)"}
-            quantities = verify.parse_quantities(ext["text"], result["stdout"])
-            verification = {"status": "inconclusive", "checks": [], "reason": "No checkable numbers in the output"}
-            if quantities:
+            try:
+                ext = await llm.chat(prompts.extract_messages(body.question, result["stdout"]), max_tokens=2000)
                 yield {"type": "step", "id": "verify", "status": "running",
-                       "title": f"A second auditor is recomputing {len(quantities)} number{'s' if len(quantities) > 1 else ''} from scratch"}
-                vmsgs = prompts.verify_messages(body.question, ds.get("files_label", ds["filename"]), ds["profile"], quantities,
-                                                RUN_TIMEOUT_S, RUN_MEMORY_MB)
-                for vtry in (1, 2):
-                    vrep = await llm.chat(vmsgs, max_tokens=6000)
-                    vcode = llm.extract_code(vrep["text"])
-                    if any(f["severity"] == "block" for f in guard.scan_code(vcode)):
-                        verification = {"status": "inconclusive", "checks": [],
-                                        "reason": "Verification code wanted risky access and was not run"}
-                        break
-                    vres = await sandbox(vcode)
-                    vpre = {"question": q_safety["status"], "data_flags": len(data_flags),
-                            "code_findings": 0, "approval": "not needed"}
-                    v_rid, _ = await store.save_receipt(kind="verification", code=vcode, result=vres,
-                                                        model=vrep["model"], run_id=rec.id, dataset=ds,
-                                                        attempt=vtry, preflight=vpre)
-                    verification = verify.compare(quantities, verify.parse_recomputed(vres["stdout"]))
-                    verification.update({"code": vcode, "model": vrep["model"], "receipt_id": v_rid if db.ENABLED else None,
-                                         "result": {k: vres[k] for k in ("job_id", "status", "exit_code", "duration_s",
-                                                                         "stdout", "stderr", "events", "limits")},
-                                         "receipt": receipt(vcode, vres, vrep["model"], vpre)})
-                    if vres["status"] == "ok" and verification["status"] != "inconclusive":
-                        break
-                    vmsgs = vmsgs + [{"role": "assistant", "content": f"```python\n{vcode}\n```"},
-                                     {"role": "user", "content": prompts.FIX_USER.format(
-                                         status=vres["status"], exit_code=vres["exit_code"],
-                                         stderr=(vres["stderr"].strip()[-2000:] or "No JSON line with the requested names was printed."))}]
+                       "title": f"Picked the numbers to verify ({ext['model']}, {ext['latency_s']} s)"}
+                quantities = verify.parse_quantities(ext["text"], result["stdout"])
+                verification = {"status": "inconclusive", "checks": [], "reason": "No checkable numbers in the output"}
+                if quantities:
+                    yield {"type": "step", "id": "verify", "status": "running",
+                           "title": f"A second auditor is recomputing {len(quantities)} number{'s' if len(quantities) > 1 else ''} from scratch"}
+                    vmsgs = prompts.verify_messages(body.question, ds.get("files_label", ds["filename"]), ds["profile"], quantities,
+                                                    RUN_TIMEOUT_S, RUN_MEMORY_MB)
+                    for vtry in (1, 2):
+                        vrep = await llm.chat(vmsgs, max_tokens=8000, code=True)
+                        vcode = llm.extract_code(vrep["text"])
+                        if any(f["severity"] == "block" for f in guard.scan_code(vcode)):
+                            verification = {"status": "inconclusive", "checks": [],
+                                            "reason": "Verification code wanted risky access and was not run"}
+                            break
+                        vres = await sandbox(vcode)
+                        vpre = {"question": q_safety["status"], "data_flags": len(data_flags),
+                                "code_findings": 0, "approval": "not needed"}
+                        v_rid, _ = await store.save_receipt(kind="verification", code=vcode, result=vres,
+                                                            model=vrep["model"], run_id=rec.id, dataset=ds,
+                                                            attempt=vtry, preflight=vpre)
+                        verification = verify.compare(quantities, verify.parse_recomputed(vres["stdout"]))
+                        verification.update({"code": vcode, "model": vrep["model"], "receipt_id": v_rid if db.ENABLED else None,
+                                             "result": {k: vres[k] for k in ("job_id", "status", "exit_code", "duration_s",
+                                                                             "stdout", "stderr", "events", "limits")},
+                                             "receipt": receipt(vcode, vres, vrep["model"], vpre)})
+                        if vres["status"] == "ok" and verification["status"] != "inconclusive":
+                            break
+                        vmsgs = vmsgs + [{"role": "assistant", "content": f"```python\n{vcode}\n```"},
+                                         {"role": "user", "content": prompts.FIX_USER.format(
+                                             status=vres["status"], exit_code=vres["exit_code"],
+                                             stderr=(vres["stderr"].strip()[-2000:] or "No JSON line with the requested names was printed."))}]
+            except llm.LLMError as e:
+                # The analysis already ran and is kept; only the second key is missing.
+                print("[verify]", str(e)[:300], flush=True)
+                verification = {"status": "inconclusive", "checks": [],
+                                "reason": "The auditor model could not write its check this time, so the numbers are unverified"}
             yield {"type": "verify", **verification}
 
         # 5. Explain only what execution proved (and what verification confirmed)
         if result and result["status"] == "ok":
             yield {"type": "step", "id": "explain", "status": "running", "title": "Writing answer"}
-            ans = await llm.chat(prompts.explain_messages_verified(body.question, code, result["stdout"],
-                                                                   result["outputs"], verification), max_tokens=3000)
+            try:
+                ans = await llm.chat(prompts.explain_messages_verified(body.question, code, result["stdout"],
+                                                                       result["outputs"], verification), max_tokens=3000)
+            except llm.LLMError as e:
+                print("[explain]", str(e)[:300], flush=True)
+                ans = {"model": None, "text": "The model could not write a summary this time, so here is the sandbox's "
+                       "printed output exactly as it ran:\n\n```\n" + result["stdout"][-6000:] + "\n```"}
             yield {"type": "answer", "markdown": ans["text"], "model": ans["model"],
                    "grounded_in_job": result["job_id"], "receipt_id": final_receipt,
                    "verified": verification["status"] if verification else None}

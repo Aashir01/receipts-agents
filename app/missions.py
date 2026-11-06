@@ -52,7 +52,7 @@ TEMPLATES = {
                         "invoice reference. Classify every invoice as paid in full, part-paid, unpaid or overpaid (allow a 0.01 "
                         "difference), detect duplicate payments (same reference and amount more than once), and list payments "
                         "whose reference matches no invoice, suggesting a likely intended invoice when the reference is a "
-                        "near miss such as a letter O typed for a zero. Print the count and total USD for each class, the "
+                        "near miss such as a letter O typed for a zero and the amount also fits that invoice's open balance; otherwise label it unknown reference and do not guess. Print the count and total USD for each class, the "
                         "total outstanding, and a table of every exception. Save the exceptions as reconciliation_exceptions.csv "
                         "and a bar chart of USD by class."),
             ("reporter", "Write the collections brief: what to chase first, what to refund, and what to correct."),
