@@ -297,12 +297,19 @@ def accept_plan(key: str, reply: dict | None, inputs: dict) -> tuple[list[dict],
     default = [{"agent": a, "task": fill(task, inputs)} for a, task in t["steps"]]
     steps = (reply or {}).get("steps")
     ok = (isinstance(steps, list) and len(steps) == len(default)
-          and all(isinstance(s, dict) and s.get("agent") == d["agent"] and isinstance(s.get("task"), str)
-                  and 20 <= len(s["task"]) <= 2000 for s, d in zip(steps, default)))
+          and all(isinstance(s, dict) and _agent_name(s.get("agent")) == d["agent"] and isinstance(s.get("task"), str)
+                  and len(s["task"].strip()) >= 20 for s, d in zip(steps, default)))
     brief = str((reply or {}).get("brief") or "")[:300]
     if not ok:
         return default, brief or f"The team will run the {t['title'].lower()} in {len(default)} steps.", False
-    return [{"agent": d["agent"], "task": s["task"].strip()} for s, d in zip(steps, default)], brief, True
+    # The lead's wording leads; the template's checks always travel with it, so no rule is dropped.
+    out = []
+    for s, d in zip(steps, default):
+        task = s["task"].strip()[:2500]
+        if d["agent"] != "reporter":
+            task += "\n\nRequired checks from the mission template: " + d["task"]
+        out.append({"agent": d["agent"], "task": task})
+    return out, brief, True
 
 
 def reporter_messages(key: str, goal: str, reports: list[dict]) -> list[dict]:
