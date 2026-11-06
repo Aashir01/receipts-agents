@@ -318,6 +318,31 @@ def build_manifest(flight: list[dict], granted_files: list[str] | None, sites: l
             "privacy": masker.stats() if masker else None}
 
 
+def merge_manifests(parts: list[dict | None], privacy: dict | None = None) -> dict:
+    """One blast radius for a whole mission: the union of what each specialist was granted, used and tried."""
+    parts = [p for p in parts if p]
+    def union(get):
+        return sorted({x for p in parts for x in (get(p) or [])})
+    machines = sorted({p["granted"].get("machine") for p in parts if p.get("granted", {}).get("machine")})
+    sites = union(lambda p: p["granted"].get("sites"))
+    granted = {"files": union(lambda p: p["granted"].get("files")), "sites": sites,
+               "network": "allowlisted sites only" if sites else "none",
+               "secrets": "none (only planted canaries)", "machine": ", ".join(machines) or "executor VM"}
+    used = {"files_read": union(lambda p: p["used"].get("files_read")),
+            "files_written": union(lambda p: p["used"].get("files_written")),
+            "web": union(lambda p: p["used"].get("web")),
+            "sandbox_jobs": sum(p["used"].get("sandbox_jobs", 0) for p in parts),
+            "signed_by_executor": sum(p["used"].get("signed_by_executor", 0) for p in parts),
+            "model_saw_personal_data": 0 if (privacy or {}).get("enabled") else None}
+    outside = union(lambda p: p.get("outside_grant"))
+    breach = any(p.get("radius") != "zero" for p in parts) or bool(outside)
+    return {"granted": granted, "used": used,
+            "attempted": [a for p in parts for a in p.get("attempted") or []][:20],
+            "tripwires": [t for p in parts for t in p.get("tripwires") or []][:10],
+            "outside_grant": outside, "radius": "breach" if breach else "zero", "privacy": privacy,
+            "specialists": len(parts)}
+
+
 def public_outputs(result: dict, receipt_id: str | None = None) -> list[dict]:
     out = []
     for o in result["outputs"]:
@@ -1274,6 +1299,8 @@ async def _forward(mission_id: str, step: int, agent: str, resp, sink: dict):
                 sink["verified"] = ev.get("status")
             elif t == "privacy":
                 sink["privacy"] = ev
+            elif t == "manifest":
+                sink["manifest"] = ev
             elif t == "records" and ev.get("dataset"):
                 sink["dataset"] = ev["dataset"]
             elif t == "done":
@@ -1413,7 +1440,7 @@ async def mission_run(body: MissionReq, request: Request):
                 web_ds = sink.get("dataset")
             reports.append({"step": i, "agent": st["agent"], "task": task, "status": sink["status"],
                             "answer": sink.get("answer") or sink.get("error") or "", "verified": sink.get("verified"),
-                            "privacy": sink.get("privacy")})
+                            "privacy": sink.get("privacy"), "manifest": sink.get("manifest")})
             yield {"type": "agent_done", "step": i, "agent": st["agent"], "status": sink["status"],
                    "verified": sink.get("verified"), "child_run": sink.get("run_id"), "error": sink.get("error")}
             if st["agent"] == "researcher" and not web_ds:
@@ -1444,6 +1471,7 @@ async def mission_run(body: MissionReq, request: Request):
             for k, v in (p.get("kinds") or {}).items():
                 total["kinds"][k] = total["kinds"].get(k, 0) + v
         yield {"type": "privacy", **total, "scope": "across the whole team"}
+        yield {"type": "manifest", **merge_manifests([r.get("manifest") for r in reports], total), "scope": "across the whole team"}
         yield {"type": "done", "total_s": round(time.monotonic() - started, 2), "status": "done" if ok else "failed",
                "run_id": rec.id, "saved": db.ENABLED, "verified": overall}
 

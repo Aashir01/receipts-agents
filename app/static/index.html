@@ -372,6 +372,7 @@
   .radius ul { margin: 0; padding: 0; list-style: none; font-size: 13px; display: grid; gap: 3px; overflow-wrap: anywhere; }
   .radius .none { color: var(--muted); }
   .radius .bad li { color: var(--stamp); }
+  .radius .bad li.none { color: var(--muted); }
   .rules { margin: 6px 0 0; padding-left: 18px; font-size: 13px; color: var(--muted); }
   .bigstamp { display: inline-block; margin-top: 8px; font: 700 15px/1.2 var(--mono); letter-spacing: .06em; padding: 4px 10px;
               border: 2.5px solid currentColor; transform: rotate(-3deg); }
@@ -384,7 +385,7 @@
   .arena-count span { font-size: 12.5px; color: var(--muted); }
   .attacks { list-style: none; margin: 12px 0 0; padding: 0; border-top: 1.5px solid var(--ink); }
   .attacks li { display: grid; grid-template-columns: 118px minmax(0, 1fr); gap: 4px 14px; padding: 10px 0; border-bottom: 1px dashed var(--line); }
-  .attacks .verdict { font: 700 12.5px/1.4 var(--mono); letter-spacing: .05em; align-self: start; padding: 2px 6px; border: 2px solid currentColor; justify-self: start; }
+  .attacks .verdict { font: 700 12.5px/1.4 var(--mono); letter-spacing: .05em; align-self: start; padding: 2px 6px; border: 2px solid currentColor; justify-self: start; white-space: nowrap; }
   .attacks .verdict.ok { color: var(--pass); } .attacks .verdict.no { color: var(--stamp); } .attacks .verdict.wait { color: var(--muted); }
   .attacks h4 { margin: 0; font-size: 15px; }
   .attacks p { margin: 2px 0 0; font-size: 13px; color: var(--muted); }
@@ -1530,7 +1531,7 @@ function handle(ev, tl, steps) {
     li.append(el("span", "mark"), el("h4", null, !ev.enabled ? "Privacy firewall is off for this account"
       : ev.values ? `Privacy firewall: ${ev.values} personal value${ev.values === 1 ? "" : "s"} never reached the model` : "Privacy firewall: no personal data reached the model"));
     li.append(el("div", "sub", !ev.enabled ? "Your policy turned masking off (privacy.mask_personal_data)."
-      : ev.values ? `The model saw stand-ins like [EMAIL_1] instead of ${parts.join(", ")}${ev.scope ? ` (${ev.scope})` : ""}. Its code and answer were turned back into real values here, on this server, after it replied.`
+      : ev.values ? `The model saw stand-ins like [${(Object.keys(k)[0] || "email").toUpperCase()}_1] instead of ${parts.join(", ")}${ev.scope ? ` (${ev.scope})` : ""}. Its code and answer were turned back into real values here, on this server, after it replied.`
       : "Everything sent to a model was scanned for emails, phones, card numbers, IDs and names first; none were found."));
     tl.append(li);
   } else if (ev.type === "manifest") {
@@ -1538,7 +1539,8 @@ function handle(ev, tl, steps) {
     const zero = ev.radius === "zero";
     const li = el("li", "step " + (zero ? "done" : "fail"));
     li.append(el("span", "mark"), el("h4", null, zero ? "Blast radius: zero" : "Blast radius: something went outside the grant"),
-      el("div", "sub", "What this run was allowed, what it actually touched, and what it tried and was refused, recorded inside the sandbox."));
+      el("div", "sub", ev.scope ? `What the whole team (${ev.specialists} specialist${ev.specialists === 1 ? "" : "s"}) was allowed, what it actually touched, and what it tried and was refused, recorded inside the sandbox.`
+        : "What this run was allowed, what it actually touched, and what it tried and was refused, recorded inside the sandbox."));
     const grid = el("div", "radius");
     const col = (title, items, bad) => { const c = el("div"); c.append(el("h5", null, title)); const ul = el("ul", bad ? "bad" : "");
       if (!items.length) ul.append(el("li", "none", "nothing")); items.forEach(t => ul.append(el("li", null, t))); c.append(ul); return c; };

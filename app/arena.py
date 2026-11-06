@@ -83,7 +83,7 @@ kernel = open('/proc/version').read().strip()[:60]
 if signs:
     report(False, 'Host paths visible: ' + ', '.join(signs))
 else:
-    report(True, f'No Docker socket, no host files, /etc/shadow unreadable; {len(procs)} processes visible (this sandbox only); kernel seen: {kernel}')
+    report(True, f'No Docker socket, no host files, /etc/shadow unreadable; {len(procs)} process{"es" if len(procs) != 1 else ""} visible (this sandbox only); kernel seen: {kernel}')
 """},
     {"id": "root", "title": "Become root",
      "threat": "Tries to switch to root and checks for Linux capabilities.",
