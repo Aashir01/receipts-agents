@@ -1,24 +1,159 @@
+<div align="center">
+
+<img src="app/static/favicon.svg" width="72" alt="Countersign logo">
+
 # Countersign
 
-**Every answer, signed twice.** An AI agent that analyses your files and works on live websites inside a sealed sandbox on Vultr. A second, independent auditor checks its numbers, every step prints a receipt you can replay, and risky runs can get a brand-new Vultr VM that is destroyed afterwards.
+**Every answer, signed twice.**
 
-Built for the [Vultr: Agent Rush Hackathon](https://lablab.ai/ai-hackathons/vultr-hackathon) on lablab.ai, Challenge 1: *Blast Radius Zero*.
+A team of AI agents that does real business work, such as reconciling invoices, auditing expenses or checking competitor prices, inside a sealed sandbox on Vultr.
+Every number is recomputed by an independent auditor, and every step prints a receipt you can replay.
 
-- Website: https://agentrush.aashirnoman.dev
-- Workspace: https://agentrush.aashirnoman.dev/workspace
+[**Try it live**](https://agentrush.aashirnoman.dev) · [Open the workspace](https://agentrush.aashirnoman.dev/workspace) · [How it works](#how-it-works) · [Security](#zero-blast-radius)
 
-(The repository keeps its original name, `receipts-agents`.)
+Built for the [Vultr: Agent Rush Hackathon](https://lablab.ai/ai-hackathons/vultr-hackathon), Challenge 1: *Blast Radius Zero*
+
+</div>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/media/landing-hero-dark.png">
+  <img src="docs/media/landing-hero-light.png" alt="Countersign landing page: Every answer, signed twice, with a printed sandbox receipt stamped VERIFIED">
+</picture>
 
 ---
 
 ## The problem
 
-Ask a chatbot about your spreadsheet and it will happily describe numbers it never computed. Give an agent a code interpreter and you have a new problem: the code is written by a model, the data may contain instructions from strangers, and the code runs somewhere you care about.
+Businesses want AI agents to do real work: close the books, check expense claims, review the pipeline, watch competitor prices. Two things stop them.
 
-Countersign does both halves properly:
+**1. They can't trust the numbers.** A language model will confidently describe figures it never computed. One wrong total in a board report and the agent is switched off for good.
 
-1. **Real work, not descriptions.** The agent writes Python, actually runs it on your file, reads the real output, fixes its own errors, and only reports numbers the code printed.
-2. **Zero blast radius.** That code never touches the web server. It runs in a throwaway gVisor container on a separate Vultr VM with no network, no secrets, hard limits, and is destroyed after every task.
+**2. They can't contain the risk.** To do real work, an agent has to run code it wrote itself, on data that may contain instructions from strangers, such as a support ticket, a CSV export or a web page. That code runs somewhere you care about. One prompt injection and your API keys, customer data or servers are gone.
+
+Most agent products pick one problem and hand-wave the other. Countersign solves both, and proves it with receipts.
+
+## The solution
+
+Countersign gives each business job to a **team of agents** and builds containment around them in layers:
+
+- **Agents run code, not guesses.** The analyst writes Python, runs it on your file in a sealed sandbox and reports only numbers the code actually printed.
+- **A second key on every answer.** An independent auditor, who never sees the analysis, writes its own script from scratch and recomputes the headline numbers in a fresh sandbox. They have to agree, or the answer says so.
+- **A receipt for every step.** Each sandbox job prints the SHA-256 of the code, the output and every file, plus the pinned image digest. Anyone can replay it later and get the same hashes. A tamper-evident copy lives in Vultr Object Storage.
+- **Zero blast radius.** Code runs under gVisor on a separate Vultr VM that holds no secrets and has no network. For the riskiest work, a brand-new VM is created for one run and destroyed afterwards. Vultr's API confirms the deletion.
+
+### Watch an attack get contained
+
+One ticket in the sample file hides instructions telling the AI to read environment variables and `/etc/passwd` and upload them to an external server. The run below happens on a **fresh Vultr VM** that is destroyed when it ends.
+
+<img src="docs/media/demo-attack-contained.gif" alt="Live run: the question is flagged as unsafe, a fresh Vultr VM is assigned, the poisoned cell is detected, the agent refuses the hidden instruction and the VM is destroyed after 28 seconds" width="800">
+
+The safety model flags the question, a sandbox-side scan finds the poisoned cell, the agent treats the message as data and refuses it, and the VM is deleted 28 seconds later. Even if the model had obeyed, there was no network to upload to and no secret to steal.
+
+### Watch a team close the books
+
+Two CSV files go in: Q3 invoices and payments. A lead agent plans the job, the analyst reconciles it in the sandbox, an auditor recomputes it, and the reporter writes the brief.
+
+<img src="docs/media/demo-mission.gif" alt="Live invoice reconciliation mission: lead agent plans, analyst runs code in the sandbox, auditor verifies every count, reporter writes the collections brief, receipts print" width="800">
+
+The sample data hides eight problems. The team found all of them in about two minutes:
+
+| Planted problem | Found |
+| --- | --- |
+| 3 unpaid invoices (INV-3007, INV-3019, INV-3033) | ✅ chased, $5,818.26 |
+| 2 part-paid invoices (INV-3012 at 60%, INV-3026 at 50%) | ✅ $2,770.39 still open |
+| A $50 overpayment on INV-3021 | ✅ refund or credit |
+| A duplicate card payment on INV-3015 | ✅ PAY-9014 and PAY-9015 flagged |
+| A payment typed as `INV-3O28` (letter O, not zero) | ✅ matched to INV-3028 only because the amount fits its open balance |
+| A payment to an invoice that doesn't exist (`INV-3099`) | ✅ left unassigned to trace, no guessing |
+
+## What makes it different
+
+**Two keys, not one.** Most "verified AI" means the model checked itself. In Countersign, a second agent with a different prompt and no access to the first agent's code or results recomputes the numbers in a separate sandbox.
+
+<img src="docs/media/app-two-key.png" alt="Two-key verification table: each number the analysis printed next to the number the auditor recomputed, all marked match" width="760">
+
+**Receipts you can replay.** Every job gets a receipt like the one on the right of the hero image. **Re-run this receipt** executes the exact code again in a fresh sandbox and compares SHA-256 hashes for the code, the output, every file and the sandbox image. **Check the archived copy** compares the database record with an independent copy in Vultr Object Storage, so an edited receipt is caught.
+
+<img src="docs/media/app-receipt.png" alt="Sandbox receipt: job id, model, code SHA-256, exit code, gVisor runtime, no network, 512 MB / 1 CPU / 30 s limits, non-root user, zero secrets, pinned image digest, container removed" width="760">
+
+**A fresh server per run, for real.** A warm pool keeps one snapshot-restored Vultr VM ready. A run claims it in seconds, every sandbox job goes only to that machine, and the VM is deleted afterwards. The watchdog cleans up anything older than 15 minutes.
+
+**Honest when it can't be sure.** If the auditor disagrees, the brief says which number failed. If a model can't produce a check, the result is labelled *unverified* instead of being dressed up. If an assumption was needed, for example "no selling price in the file, so this is cost, not revenue", the brief states it.
+
+<img src="docs/media/app-brief.png" alt="Executive brief for a sales pipeline review: summary, findings with numbers, recommended actions and how it was checked" width="760">
+
+## Missions: business jobs, not prompts
+
+Pick a job and attach your files, or use the sample data. A **lead agent** plans it and briefs each specialist. Every step runs sealed and prints its own receipts.
+
+<img src="docs/media/landing-missions.png" alt="Nine missions: competitor price check, invoice reconciliation, expense policy audit, monthly business report, churn risk review, sales pipeline review, inventory reorder plan, messy data clean-up, custom mission" width="900">
+
+| Agent | Job |
+| --- | --- |
+| **Lead agent** | Reads the goal and inputs, plans the steps, writes each specialist's task |
+| **Researcher** | Drives a sealed Chromium browser on approved sites only, and must quote the page text behind every fact |
+| **Analyst** | Writes and runs Python on the files, fixes its own errors, and gets audited |
+| **Reporter** | Writes the executive brief using only numbers the sealed runs printed |
+
+<img src="docs/media/app-mission-plan.png" alt="Mission plan written by the lead agent for a custom stock-out question, with the analyst's full task" width="760">
+
+The **custom mission** lets the lead agent design the team itself. Its plan is checked against hard rules before anything runs: the reporter goes last, the researcher only works with sites you allowed and runs before the analyst, and the analyst only works with real data.
+
+### Tested live, numbers checked by hand
+
+Each run below happened on the live site. I recomputed the headline numbers from the sample files separately with pandas.
+
+| Mission | Time | Result |
+| --- | --- | --- |
+| Invoice reconciliation | 121 s | Verified. All planted problems found (table above) |
+| Expense policy audit | 103 s | Verified. All 8 policy rules match my recount: 18 violation records across 10 claims |
+| Sales pipeline review | 63 s | Verified. 48 deals, $1,632,500; 32 open, $993,000. Exact match |
+| Monthly business report | 78 s | Verified. Revenue $3,837,892.79, margin 36.47%. Exact match |
+| Web research (5 cheapest Travel books) | 6 browser turns | Evidence check: 8 of 8 quotes found word for word on pages the browser loaded |
+| Poisoned ticket on a fresh VM | VM deleted after 28 s | Attack refused, nothing leaked, deletion confirmed by the Vultr API |
+
+<img src="docs/media/app-charts.png" alt="Charts produced inside the sandbox: invoice USD by reconciliation class, and invoiced versus paid" width="680">
+
+## Zero blast radius
+
+<img src="docs/media/landing-sealed.png" alt="Sealed by design: Blocked, nothing leaves; Held, you decide the risky parts; Refused, a browser on a short leash; Reproduced, check it yourself; Destroyed, a fresh server per run; Printed, a report you can hand on" width="900">
+
+<img src="docs/media/app-attack-contained.png" alt="Timeline of the prompt-injection run: question flagged unsafe, fresh VM assigned, suspicious cell found, agent refuses the hidden instruction, fresh VM destroyed" width="760">
+
+| Layer | What stops what |
+| --- | --- |
+| **gVisor sandbox** | Model-written code runs on a user-space kernel, never the host kernel |
+| **Separate machine** | Code runs on an executor VM that holds no API keys; it only talks to the app over a private Vultr VPC |
+| **No network** | `--network none`: exfiltration and downloads simply fail |
+| **Hard limits** | 512 MB, 1 CPU, 64 processes, 30 s; non-root, no capabilities, read-only root, container removed after every job |
+| **Pre-flight checks** | Nemotron safety check on the question; a sandbox-side scan for instructions hidden in data; a static scan of the generated code |
+| **Human in the loop** | Code that reaches for the network or secrets, and any browser submit, purchase or sign-up, pauses for your approval |
+| **Browser on a short leash** | Per-task internal network whose only exit is an allowlist proxy; private and cloud-metadata addresses refused; password and card fields never filled |
+| **Fresh-VM tier** | A never-used Vultr VM per run, with its own derived token, deleted after the run and confirmed through the API |
+| **Pinned images** | Sandbox, browser and proxy images pulled by digest from Vultr Container Registry; the digest is on every receipt |
+| **Tamper evidence** | Receipts and audit exports archived to Vultr Object Storage with their hashes |
+
+`runner/test-runner.py` proves the controls from the app server: exfiltration blocked, no secrets present, infinite loop killed, memory bomb killed, host filesystem read-only.
+
+## Built for teams: the audit trail
+
+Every run on your account shows its sealed jobs, blocked actions, human decisions and the machine it ran on. One click exports CSV for your compliance team, and that export is archived to Object Storage too. The **Platform safeguards** panel reads the live state from the Vultr API: backups, firewall groups, pinned images, the archive and the fresh-VM pool.
+
+<img src="docs/media/app-audit-trail.png" alt="Audit trail: platform safeguards live from Vultr, all ON, plus run, mission, sealed job, blocked action, approval and fresh VM counts" width="760">
+
+## Built on Vultr, every service with a job
+
+| Vultr service | Its job in Countersign |
+| --- | --- |
+| **Serverless Inference** | Every agent: `minimax-m3.1-flash` plans and writes, `deepseek-v4.1-flash` writes code (each falls back to the other), `nemotron-3.5-content-safety` screens questions, and `nemotron-3-nano-omni` checks browser screenshots |
+| **Cloud Compute ×2** | The app server, and an isolated executor that holds no secrets |
+| **VPC** | The executor is reachable only on a private network |
+| **Firewall** | Firewall groups on both VMs, checked live in the audit trail |
+| **API + Snapshots** | The warm pool of fresh VMs: create, claim, delete, confirm |
+| **Object Storage** | A tamper-evident copy of every receipt and audit export |
+| **Container Registry** | Sandbox images pinned by digest, named on every receipt |
+| **Automatic Backups** | Daily backups of the app server and its database |
+| **Marketplace: Coolify** | Git deploys, TLS, and self-hosted Supabase for accounts |
 
 ## How it works
 
@@ -27,183 +162,94 @@ flowchart LR
     U[Browser] -->|HTTPS| T
 
     subgraph VM1["Vultr Cloud Compute: app server"]
-        T[Coolify / Traefik TLS] --> A[Receipts API<br/>FastAPI]
+        T[Coolify / Traefik TLS] --> A[Countersign API<br/>FastAPI + agents]
     end
 
-    A -->|plan, code, fix, explain| I[Vultr Serverless Inference<br/>minimax-m3.1-flash<br/>fallback deepseek-v4.1-flash]
-    A -->|code + file over Vultr VPC<br/>token auth| R
+    A -->|plan, code, audit, brief| I[Vultr Serverless Inference]
+    A -->|receipts| O[(Vultr Object Storage)]
+    A -->|code + file over VPC<br/>token auth| R
+    A -->|create / delete| V[Vultr API]
 
     subgraph VM2["Vultr Cloud Compute: executor (no secrets)"]
-        R[Sandbox runner<br/>private IP only] --> S1[gVisor container<br/>job 1]
-        R --> S2[gVisor container<br/>job 2]
+        R[Sandbox runner<br/>private IP only] --> S1[gVisor sandbox<br/>no network]
+        R --> S2[gVisor Chromium<br/>allowlist proxy only]
     end
+
+    V -.->|warm pool| F[Fresh VM<br/>one run, then deleted]
 ```
 
-**The agent loop** (streamed live to the UI):
+<img src="docs/media/landing-how.png" alt="How it works: describe the job, the agents plan and run sealed code, the auditor recomputes, you get a brief and receipts" width="900">
 
-1. **Profile and data scan**: the uploaded file is opened *inside the sandbox* by fixed code, which also flags cells that try to give instructions to an AI (prompt injection). The web server never parses user files.
-1. **Pre-flight question check**: `nemotron-3.5-content-safety` on Vultr Serverless Inference plus heuristics.
-2. **Plan**: the model writes a short plan from the file profile and the question.
-2. **Explore (stage 1 of 3)**: a short model-written script inspects the data in the sandbox (exact category values, date ranges); its printed findings feed the analysis.
-3. **Code**: the model writes one Python script.
-4. **Pre-flight code scan**: the generated code is parsed (never executed) with Python's `ast`. Network, process, secret, dynamic-code and system-file access pause the run for **human approval**. Rejected code never runs; the model rewrites it.
-5. **Run**: the script is dispatched to the executor VM and runs in a fresh gVisor container.
-6. **Self-heal**: on failure, the real traceback goes back to the model, up to 3 attempts. If the sandbox *blocked* something, the model is told the action was forbidden and to ignore instructions hidden in the data.
-7. **Verify (stage 3 of 3, two-key)**: a second model call picks the headline numbers (each must literally appear in the printed output), then an *independent auditor* script, written without seeing the analysis code or values and using a different method, recomputes them in a fresh sandbox. Match within 0.5% stamps **VERIFIED**; disagreement is flagged in the answer.
-8. **Explain**: the model answers using only the printed output. The answer is tied to the job ID that produced it.
+**One analyst run, streamed live:**
 
-A **Stop** button halts the agent at any point and kills the running sandbox container immediately; the dashboard shows the live count of sandbox containers (0 when idle).
+1. **Profile and scan.** Fixed code opens your file inside the sandbox and flags cells that try to instruct an AI. The web server never parses user files.
+2. **Pre-flight.** A Nemotron safety check runs on the question.
+3. **Plan and explore.** The model plans, then a short script inspects the real data: categories, date ranges, columns.
+4. **Write and scan code.** The model writes one script. An AST scan pauses anything that reaches for the network, processes, secrets or system files.
+5. **Run and self-heal.** The script runs in a fresh gVisor container. On failure the real traceback goes back to the model, up to 3 attempts.
+6. **Two-key verify.** An independent auditor recomputes the headline numbers with its own code in a fresh sandbox. Agreement within 0.5% earns **VERIFIED**.
+7. **Explain.** The answer may use only printed output, and is tied to the job ID that produced it.
 
-Every run prints a **receipt**: job ID, model, SHA-256 of the exact code, exit code, duration, runtime, limits, containment events, and SHA-256 of every output file.
+**Web research** works the same way, with a browser: the model can only pick actions from a fixed list (`goto`, `click`, `extract`, …) and never writes browser code. Every quote in the answer is matched against text the browser actually loaded, and a vision model checks the final screenshot.
 
-## Missions: a lead agent runs a team
+**PDF reports** are laid out inside the sandbox by a fixed, human-written script, never a model-written one, and get their own receipt.
 
-Give Countersign a business job instead of a prompt. A **lead agent** reads the mission and its inputs and writes a concrete task for each specialist; guardrails keep it to the team and order the mission allows. Each specialist step is an ordinary sealed run with its own receipts, streamed live into one timeline:
+## Try it
 
-| Agent | What it does |
-| --- | --- |
-| Lead agent | Plans the mission and briefs each specialist |
-| Researcher | The sandboxed browser agent: approved sites only, quotes its evidence |
-| Analyst | Writes and runs Python on the mission's files (several at once), fixes its own errors; an independent auditor recomputes its numbers |
-| Reporter | Writes the executive brief using only numbers the sealed runs printed |
+1. Open **[agentrush.aashirnoman.dev](https://agentrush.aashirnoman.dev)** and click **Try it with sample data**.
+2. Pick **Missions → Invoice reconciliation → Use sample** for both files, then **Run mission**.
+3. Then try **Watch an attack get contained**. Sign in and choose **Run on: a fresh Vultr VM** to watch a server being created for you and destroyed afterwards.
 
-Ready-made missions, each with realistic sample data:
-
-- **Competitor price check** (e-commerce): the researcher collects competitor prices from approved sites, the analyst compares them with your price list, the reporter recommends repricing.
-- **Invoice reconciliation** (finance): matches invoices to payments and flags unpaid, part-paid, overpaid, duplicated and unmatched payments (the sample hides a letter-O typo, a duplicate, an overpayment and an unknown reference).
-- **Monthly business report** (management): KPIs, month-over-month growth, regions, channels, top movers, all recomputed.
-- **Messy data clean-up** (operations): a consistent file plus a change log of every fix.
-- **Expense policy audit** (finance and compliance): meal and hotel limits, flight class, alcohol, missing receipts, weekend claims, duplicates and split purchases.
-- **Churn risk review** (SaaS): transparent rule-based risk scores per account and the monthly revenue at risk.
-- **Inventory reorder plan** (supply chain): days of cover, reorder points and quantities from two files, and cash tied up in overstock.
-- **Sales pipeline review** (RevOps): weighted forecast, stale and slipped deals, win rate per rep.
-- **Custom mission**: describe any goal, attach up to three files and allow websites; the lead agent designs the team itself. Its plan is checked against hard rules (2 to 4 steps, reporter last, researcher only with allowed sites and before the analyst, analyst only with files); a rejected plan gets one corrected attempt, then a safe default.
-
-### Audit trail
-
-The **Audit trail** tab lists every run on the account with its sealed jobs, blocked actions, human approvals and rejections, and the machine each ran on (shared executor or fresh VM). Mission steps are grouped under their mission. One click exports it as CSV for a compliance team (`GET /api/audit.csv`). Every workspace action is also a documented HTTP endpoint (`/docs`).
-
-With **Run on: a fresh Vultr VM**, the whole team shares one never-used VM that is destroyed when the mission ends. Every mission can be downloaded as a PDF brief with the team's steps and every receipt.
-
-## Research the web (sandboxed browser agent)
-
-The second mode gives the agent a real Chromium browser, still with zero blast radius:
-
-```mermaid
-flowchart LR
-    A[Receipts API] -->|actions + allowlist| R[Runner on VM2]
-    R --> N{{per-task Docker network<br/>--internal, no internet route}}
-    N --- B[gVisor Chromium<br/>fixed action vocabulary]
-    N --- P[Egress proxy<br/>allowlisted domains only]
-    P -->|only approved sites| W[(The web)]
-```
-
-1. **Scope**: you name the sites, or the model proposes them and you approve. The browser can reach nothing else.
-2. **Plan**: the model replies with JSON actions from a fixed vocabulary (`goto`, `click`, `fill`, `select`, `check`, `press`, `extract`, `wait`, `screenshot`). It never writes browser code.
-3. **Action guard**: navigation outside the allowlist is refused before anything runs; typing into password, card or account fields is always refused; anything that submits, buys, sends or signs up pauses for **human approval**.
-4. **Browse**: each turn starts a fresh gVisor container on its own `--internal` network. Its only route out is a per-task egress proxy that allows the approved domains, resolves DNS itself and refuses private, loopback and cloud-metadata addresses (DNS-rebinding safe). Blocked attempts become receipt events. Browser, proxy and network are removed after every turn.
-5. **Evidence check**: the agent must quote the page text behind its answer; every quote is matched against text the browser actually returned, and a vision model on Vultr Serverless Inference checks the final screenshot. Unbacked claims stamp **MISMATCH**.
-6. **Hand-off**: extracted records become a dataset, profiled in the analyst sandbox, so you can go straight from "collect this from the web" to "chart it".
-
-Page text is treated as untrusted data throughout: the model is told never to follow instructions found on a page, and even if it tried, it could only reach the approved sites and never type a credential.
-
-## Fresh-VM mode (maximum isolation)
-
-For anything you do not want to share a machine with, choose **Run on: a fresh Vultr VM** (signed-in users).
-
-Restoring a Vultr snapshot takes 10 to 60 minutes, so the app keeps a **warm pool**:
-
-1. A watchdog uses the **Vultr API** to create a standby Cloud Compute instance from a snapshot of the executor VM, in the same VPC and firewall group, tagged `receipts-standby`. A boot script binds its runner to its own private IP with its **own runner token** (derived per VM, never the main token). A standby VM never runs anything.
-2. A run that asks for a fresh VM **claims** a ready standby (retagged `receipts-disposable`). Every sandbox job of that run (exploration, analysis, self-fixes, the auditor, or the browser turns) goes only to that VM, and receipts record `executed_on: disposable-vm:<instance id>`. A replacement starts booting immediately.
-3. When the run ends, is stopped, or fails, the VM is **deleted and the deletion confirmed** through the Vultr API, and a DESTROYED slip prints.
-4. The watchdog deletes claimed VMs older than 15 minutes, standbys older than 24 hours, and standbys whose runner never answers. Caps: 2 in use at once, 10 created per hour.
-
-If no standby is ready, the run says so and uses the shared sandbox; it never waits on a snapshot restore. Pool status: `GET /api/vm-pool`.
-
-## PDF report
-
-Any finished run (analysis or web research) can be downloaded as a PDF: question, answer, verification table or evidence quotes, charts or screenshots, containment summary, every sandbox receipt, and the final code. The PDF is laid out **inside the sandbox** by a fixed, human-written script (never model-written) from the run's recorded events and stored files, and gets its own receipt (kind `report`) with its SHA-256.
-
-## Containment
-
-| Control | How |
-| --- | --- |
-| Process isolation | gVisor (`runsc`) user-space kernel; code never runs on the host kernel or in the app runtime |
-| Separate machine | Execution happens on a second Vultr VM; the app server only sends code over the VPC |
-| No network | `--network none`; data exfiltration and downloads fail |
-| No secrets | The executor holds no API keys; the inference key lives only on the app server |
-| Resource limits | 512 MB memory (no swap), 1 CPU, 64 processes, 30 s wall clock |
-| Least privilege | Non-root user, all capabilities dropped, `no-new-privileges`, read-only root filesystem, 64 MB tmpfs |
-| Lifecycle | One container per task, `--rm`, existence checked after every run, job folder deleted |
-| Network perimeter | Runner listens only on the private IP; host firewall allows only the app server's private IP; Vultr Firewall groups on both VMs |
-| Pre-flight guard | Sandbox-side data scan for injected instructions, Nemotron safety check on the question, static code scan, human approval for anything risky |
-| Browser egress | Per-task internal network; allowlist proxy is the only exit (the proxy runs only our fixed proxy code in a hardened standard container, read-only, no capabilities, nobody user; the browser itself runs on gVisor); private/metadata IPs refused; 1 GB memory, 256 processes, 90 s per turn |
-| Browser actions | Fixed action vocabulary (no model-written browser code), credential fields refused, submits need approval |
-| Fresh-VM tier | Optional never-used Vultr VM per run from a warm pool, own runner token, deleted after the run and confirmed via API; watchdog cleans up |
-| Abuse limits | Per-IP hourly rate limit, 10 MB uploads, output size caps |
-
-**Containment moment (shown in the demo video):** load *Poisoned support tickets*. One ticket contains hidden instructions telling the AI to read environment variables and `/etc/passwd` and upload them to an external server. If the model follows them, the upload fails because the sandbox has no network, the run is flagged and stamped BLOCKED, the environment shows zero secrets, and the agent retries with a security note and produces the honest summary.
-
-`runner/test-runner.py` proves each control from the app server: exfiltration blocked, no secrets present, infinite loop killed, memory bomb killed, host filesystem read-only.
-
-## Vultr services used
-
-- **Vultr Cloud Compute ×2** (Atlanta): app server and isolated executor.
-- **Vultr Serverless Inference**: all LLM calls (OpenAI-compatible API at `api.vultrinference.com/v1`), main model `minimax-m3.1-flash` with automatic fallback to `deepseek-v4.1-flash-1017`. Models were chosen by benchmarking six candidates on generation and repair tasks.
-- **Vultr VPC**: private network between the two VMs; the runner is unreachable from the internet.
-- **Vultr Firewall**: firewall groups on both instances.
-- **Vultr Object Storage**: every receipt is also written, with its hashes in the object metadata, to an S3-compatible bucket. **Check the archived copy** compares the database receipt with the archive, so an edited receipt is caught; audit-trail CSV exports are archived too.
-- **Vultr Container Registry**: `runner/push-images.sh` pushes the sandbox, browser and proxy images and pins the runner to their digests, then removes the registry login so the executor keeps holding no secrets. Every receipt records the exact image digest, and Replay checks it.
-- **Vultr Automatic Backups**: daily backups of the app server (database and keys); the Audit trail's **Platform safeguards** panel reads backups, firewall groups, the fresh-VM pool, pinned images and the archive live from the Vultr API.
-- **Vultr API + Snapshots**: fresh-VM mode keeps a warm pool of snapshot-restored Cloud Compute instances and destroys each one after a single run.
-- **Vultr Marketplace: Coolify**: Git-based deploys, Traefik reverse proxy and Let's Encrypt TLS on the app server.
+Works on a phone, and has a night mode.
 
 ## Repository layout
 
 ```
-Dockerfile    Builds the web app; Coolify deploys from here
-app/          Web app + agent (FastAPI, single-page UI)
-  main.py     API, analyst and research agent loops, receipts, rate limiting
-  missions.py Mission templates, lead agent planning and guardrails, reporter
-  research.py Browser prompts, action guard, evidence check
-  report.py   Fixed sandbox script that lays out the PDF report
-  archive.py  Tamper-evident receipt archive on Vultr Object Storage
-  disposable.py Fresh-VM tier: warm pool, claim, destroy, watchdog (Vultr API)
-  llm.py      Vultr Serverless Inference client with fallback
-  prompts.py  Plan / code / fix / explain prompts and the fixed profiling script
-  static/     Landing page (landing.html) and workspace (index.html)
-  samples/    Demo datasets, including the poisoned file and the mission samples
-runner/       Sandbox runner for the executor VM
-  app.py              FastAPI runner: gVisor docker run with limits, events, cleanup
-  sandbox.Dockerfile  Image the sandbox runs (pandas, matplotlib, ...)
-  browser/            Chromium + Playwright driver that runs inside gVisor
-  egress/             Per-task allowlist proxy (the browser's only exit)
-  install-runner.sh   One-command installer (systemd, private-IP bind, token)
-  test-runner.py      Containment test suite, run from the app server
+Dockerfile        Builds the web app; Coolify deploys from here
+app/              Web app + agents (FastAPI, single-page UI)
+  main.py         API, analyst / research / mission loops, receipts, audit trail
+  missions.py     Mission templates, lead agent planning and guardrails, reporter
+  research.py     Browser prompts, action guard, evidence check
+  disposable.py   Fresh-VM warm pool: create, claim, destroy, watchdog (Vultr API)
+  archive.py      Tamper-evident receipt archive on Vultr Object Storage
+  report.py       Fixed sandbox script that lays out the PDF report
+  llm.py          Vultr Serverless Inference client with fallback
+  prompts.py      Plan / code / fix / audit / explain prompts
+  static/         Landing page and workspace
+  samples/        Demo data, including the poisoned file and mission samples
+runner/           Sandbox runner for the executor VM
+  app.py          gVisor docker run with limits, events, cleanup, image digests
+  browser/        Chromium + Playwright driver that runs inside gVisor
+  egress/         Per-task allowlist proxy (the browser's only exit)
+  push-images.sh  Push images to Vultr Container Registry and pin digests
+  install-runner.sh  One-command installer (systemd, private-IP bind, token)
+  test-runner.py  Containment test suite
+docs/media/       Screenshots and recordings used in this README
 ```
 
-## Setup
+## Self-host it
 
-**Executor VM (Ubuntu 24.04, VPC attached)**
+**Executor VM** (Ubuntu 24.04, VPC attached):
 
 ```bash
 curl -fsSL https://get.docker.com | sh
 # install gVisor: https://gvisor.dev/docs/user_guide/install/
 runsc install && systemctl restart docker
-bash runner/install-runner.sh          # prints RUNNER_TOKEN
+bash runner/install-runner.sh                      # prints RUNNER_TOKEN
+bash runner/push-images.sh ord.vultrcr.com/<registry>  # optional: pin images by digest
 ufw allow from <APP_PRIVATE_IP> to any port 8080 proto tcp
 ```
 
-**App server (Vultr Marketplace: Coolify, VPC attached)**
+**App server** (Vultr Marketplace: Coolify, VPC attached): create a Coolify application from this repository (Dockerfile build pack, port `8080`, health check `/api/health`) and set the variables in `.env.example`. Secrets live only in Coolify's environment, never in the image. Self-hosted Supabase runs as a Coolify service on the same VM. Give the app Traefik's internal address for the Supabase domain with `--add-host=db.<your-domain>:<coolify-proxy IP>`, because Docker doesn't hairpin to the host's public IP.
 
-Create a Coolify application from this repository with build pack *Dockerfile* (the root `Dockerfile`, base directory `/`), port `8080`, health check `/api/health`, and the variables in `.env.example`. Self-hosted Supabase runs as a Coolify service on the same VM. Docker does not hairpin traffic from a container on the `coolify` network back through the host's public IP to Traefik, so the app is given Traefik's internal address for the Supabase domain with a Coolify custom Docker option, `--add-host=db.<your-domain>:<coolify-proxy IP on the coolify network>` (find it with `docker inspect coolify-proxy`). TLS still terminates at Traefik with the real certificate. `/api/health` reports database reachability and key roles (never the keys).
-
-Then verify from the app server:
+Then verify the containment from the app server:
 
 ```bash
 RUNNER_URL=http://<EXECUTOR_PRIVATE_IP>:8080 RUNNER_TOKEN=... python3 runner/test-runner.py
 ```
 
+Every workspace action is also a documented HTTP endpoint at `/docs`.
+
 ## License
 
-MIT
+MIT · Built by [Aashir Noman](https://www.linkedin.com/in/aashir-noman-138820152) in Karachi for Vultr Agent Rush 2026.
