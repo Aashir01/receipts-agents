@@ -15,6 +15,7 @@ FILES = {
     "/opt/agentrush-runner/egress/Dockerfile": HERE / "egress" / "Dockerfile",
     "/etc/systemd/system/agentrush-runner.service": HERE / "agentrush-runner.service",
     "/opt/agentrush-runner/push-images.sh": HERE / "push-images.sh",
+    "/opt/agentrush-runner/update-runner.sh": HERE / "update-runner.sh",
 }
 
 
@@ -46,7 +47,7 @@ chmod 711 /var/lib/agentrush /var/lib/agentrush/jobs
 echo "==> Creating Python environment"
 python3 -m venv /opt/agentrush-runner/venv
 /opt/agentrush-runner/venv/bin/pip install -q --upgrade pip
-/opt/agentrush-runner/venv/bin/pip install -q fastapi "uvicorn[standard]" pydantic
+/opt/agentrush-runner/venv/bin/pip install -q fastapi "uvicorn[standard]" pydantic cryptography
 
 echo "==> Building sandbox image (pandas, matplotlib, ...)"
 docker build -q -t agentrush-sandbox:latest -f /opt/agentrush-runner/sandbox.Dockerfile /opt/agentrush-runner >/dev/null

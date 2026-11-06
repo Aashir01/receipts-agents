@@ -22,11 +22,17 @@ limits, and returns real output plus a containment report.
 
 The executor holds no API keys. Only the shared RUNNER_TOKEN, which
 authenticates the app server.
+
+Every result is signed by this machine: at boot the runner generates an Ed25519 key in memory
+(never written to disk, gone when the process or VM is) and signs what it actually executed:
+the script hash, inputs, printed output, exit code, output files and the image digest.
 """
 
 import asyncio
 import base64
+import hashlib
 import json
+import socket
 import os
 import re
 import secrets
@@ -133,6 +139,33 @@ def _detect_blocked_actions(stderr: str) -> list[str]:
     return findings
 
 
+try:
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    _SIGNER = Ed25519PrivateKey.generate()                      # in memory only, per boot
+    EXEC_PUB = base64.b64encode(_SIGNER.public_key().public_bytes(
+        serialization.Encoding.Raw, serialization.PublicFormat.Raw)).decode()
+except Exception:  # noqa: BLE001 - signing is optional; results still work unsigned
+    _SIGNER, EXEC_PUB = None, None
+
+
+def _canon(obj) -> bytes:
+    return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+
+
+def _sha(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def attest(fields: dict) -> dict | None:
+    """This machine's signature over what it ran. Only strings, ints and null are signed."""
+    if _SIGNER is None:
+        return None
+    payload = {**fields, "host": socket.gethostname(), "signed_at": int(time.time())}
+    return {"alg": "ed25519", "pub": EXEC_PUB, "payload": payload,
+            "sig": base64.b64encode(_SIGNER.sign(_canon(payload))).decode()}
+
+
 _digests: dict[str, str] = {}
 
 
@@ -157,7 +190,8 @@ async def image_digest(image: str) -> str:
 async def health():
     images = {name: {"ref": ref, "digest": await image_digest(ref)}
               for name, ref in (("sandbox", SANDBOX_IMAGE), ("browser", BROWSER_IMAGE), ("egress", EGRESS_IMAGE))}
-    return {"ok": True, "runtime": DOCKER_RUNTIME, "image": SANDBOX_IMAGE, "images": images}
+    return {"ok": True, "runtime": DOCKER_RUNTIME, "image": SANDBOX_IMAGE, "images": images,
+            "signing": EXEC_PUB is not None, "executor_key": EXEC_PUB}
 
 
 @app.post("/kill/{job_id}")
@@ -301,16 +335,27 @@ async def run(req: RunRequest, x_runner_token: str | None = Header(default=None)
                 await _docker("rm", "-f", name)
                 event("destroyed", f"Container {name} force-removed")
 
+            stdout_t = _truncate(stdout)
+            image = await image_digest(SANDBOX_IMAGE)
             return {
                 "job_id": job_id,
                 "status": status,
                 "exit_code": exit_code,
                 "duration_s": duration,
-                "stdout": _truncate(stdout),
+                "stdout": stdout_t,
                 "stderr": _truncate(stderr),
                 "outputs": outputs,
-                "limits": {**limits, "image": await image_digest(SANDBOX_IMAGE)},
+                "limits": {**limits, "image": image},
                 "events": events,
+                "attestation": attest({
+                    "kind": "run", "job_id": job_id, "status": status, "exit_code": exit_code,
+                    "script_sha256": _sha(req.code.encode()), "stdout_sha256": _sha(stdout_t.encode()),
+                    "inputs": sorted([{"name": f.name, "sha256": _sha(base64.b64decode(f.content_b64))}
+                                      for f in req.files], key=lambda x: x["name"]),
+                    "outputs": sorted([{"name": o["name"], "sha256": _sha(base64.b64decode(o["content_b64"]))}
+                                       for o in outputs], key=lambda x: x["name"]),
+                    "image": image, "network": "none", "runtime": DOCKER_RUNTIME,
+                }),
             }
         finally:
             shutil.rmtree(job_dir, ignore_errors=True)
@@ -443,11 +488,21 @@ async def browse(req: BrowseRequest, x_runner_token: str | None = Header(default
                 if f.stat().st_size <= MAX_OUTPUT_FILE_BYTES:
                     shots.append({"name": f.name, "size": f.stat().st_size,
                                   "content_b64": base64.b64encode(f.read_bytes()).decode()})
+            stdout_t = _truncate(out_b.decode(errors="replace"))
+            bimage = await image_digest(BROWSER_IMAGE)
             return {
                 "job_id": job_id, "status": status, "exit_code": exit_code, "duration_s": duration,
-                "stdout": _truncate(out_b.decode(errors="replace")), "stderr": _truncate(err_b.decode(errors="replace")),
+                "stdout": stdout_t, "stderr": _truncate(err_b.decode(errors="replace")),
                 "result": result, "outputs": shots, "events": events, "infra_error": infra_error,
-                "limits": {"runtime": DOCKER_RUNTIME, "image": await image_digest(BROWSER_IMAGE),
+                "attestation": attest({
+                    "kind": "browse", "job_id": job_id, "status": status, "exit_code": exit_code,
+                    "actions_sha256": _sha(_canon(req.actions)), "allow_domains": ",".join(domains),
+                    "stdout_sha256": _sha(stdout_t.encode()), "result_sha256": _sha(_canon(result)),
+                    "outputs": sorted([{"name": o["name"], "sha256": _sha(base64.b64decode(o["content_b64"]))}
+                                       for o in shots], key=lambda x: x["name"]),
+                    "image": bimage, "runtime": DOCKER_RUNTIME,
+                }),
+                "limits": {"runtime": DOCKER_RUNTIME, "image": bimage,
                            "network": f"private, egress via allowlist proxy ({', '.join(domains)})",
                            "memory_mb": 1024, "cpus": 1, "pids_limit": 256, "timeout_s": req.timeout_s,
                            "root_fs": "read-only", "user": f"uid {SANDBOX_UID} (non-root)",
@@ -807,10 +862,38 @@ echo "Runner now uses images pinned by digest. Registry credentials removed from
 grep -E '^(SANDBOX|BROWSER|EGRESS)_IMAGE=' "$ENVF"
 AGENTRUSH_EOF
 
+cat > /opt/agentrush-runner/update-runner.sh <<'AGENTRUSH_EOF'
+#!/usr/bin/env bash
+# Update only the runner program on the executor VM. Keeps the runner token, the private-IP bind
+# and the image digests pinned by push-images.sh. Run as root:
+#   curl -fsSL https://raw.githubusercontent.com/Aashir01/receipts-agents/main/runner/update-runner.sh | bash
+set -euo pipefail
+SRC="${1:-https://raw.githubusercontent.com/Aashir01/receipts-agents/main}"
+DIR=/opt/agentrush-runner
+echo "==> Downloading the latest runner"
+curl -fsSL "$SRC/runner/app.py" -o "$DIR/app.py.new"
+python3 -c "import ast,sys; ast.parse(open(sys.argv[1]).read())" "$DIR/app.py.new"
+cp "$DIR/app.py" "$DIR/app.py.bak" 2>/dev/null || true
+mv "$DIR/app.py.new" "$DIR/app.py"
+echo "==> Installing the signing library"
+"$DIR/venv/bin/pip" install -q cryptography
+echo "==> Restarting the runner"
+systemctl restart agentrush-runner
+sleep 3
+BIND=$(grep '^RUNNER_BIND=' /etc/agentrush/runner.env | cut -d= -f2-)
+curl -fsS "http://${BIND:-127.0.0.1}:8080/health" | python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+print("runner ok:", d.get("ok"), "| signs results:", d.get("signing"))
+for k, v in (d.get("images") or {}).items():
+    print(f"  {k}: {v.get(\"digest\", \"?\")[:90]}")'
+echo "Done. Previous version kept at $DIR/app.py.bak"
+AGENTRUSH_EOF
+
 echo "==> Creating Python environment"
 python3 -m venv /opt/agentrush-runner/venv
 /opt/agentrush-runner/venv/bin/pip install -q --upgrade pip
-/opt/agentrush-runner/venv/bin/pip install -q fastapi "uvicorn[standard]" pydantic
+/opt/agentrush-runner/venv/bin/pip install -q fastapi "uvicorn[standard]" pydantic cryptography
 
 echo "==> Building sandbox image (pandas, matplotlib, ...)"
 docker build -q -t agentrush-sandbox:latest -f /opt/agentrush-runner/sandbox.Dockerfile /opt/agentrush-runner >/dev/null

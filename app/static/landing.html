@@ -101,6 +101,32 @@
   @media (prefers-reduced-motion: reduce) { .receipt.print { animation: none; } html { scroll-behavior: auto; } }
 
   /* signed twice */
+  .chain { list-style: none; margin: 36px 0 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr));
+           gap: 0; border: 1.5px solid var(--ink); counter-reset: none; }
+  .chain li { padding: 26px; border-right: 1.5px solid var(--ink); position: relative; display: flex; flex-direction: column; gap: 10px; }
+  .chain li:last-child { border-right: 0; }
+  .chain li:not(:last-child)::after { content: "→"; position: absolute; right: -14px; top: 26px; width: 26px; height: 26px; display: grid; place-items: center;
+           background: var(--bg); border: 1.5px solid var(--ink); font: 700 15px var(--mono); z-index: 1; }
+  .chain h3 { margin: 4px 0 0; font: 700 22px/1.15 var(--display); letter-spacing: -0.02em; }
+  .chain p { margin: 0; font-size: 15px; line-height: 1.6; color: var(--body); }
+  .chain code { margin-top: auto; font: 13px var(--mono); color: var(--muted); border-top: 1px dashed var(--line); padding-top: 10px; overflow-wrap: anywhere; }
+  .chain .btn { margin-top: auto; align-self: flex-start; }
+  .chain .st { align-self: flex-start; display: inline-block; border: 2.5px solid currentColor; font: 700 15px/1.3 var(--mono); padding: 2px 9px; letter-spacing: .05em; }
+  .chain .st.red { color: var(--red); } .chain .st.blue { color: var(--blue); } .chain .st.green { color: var(--green); }
+  @media (max-width: 900px) { .chain li { border-right: 0; border-bottom: 1.5px solid var(--ink); } .chain li:last-child { border-bottom: 0; }
+    .chain li:not(:last-child)::after { content: "↓"; right: auto; left: 26px; top: auto; bottom: -14px; } }
+  .inkband { background: #101828; color: #fff; }
+  [data-theme="dark"] .inkband { background: #050914; border-top: 1.5px solid var(--line); border-bottom: 1.5px solid var(--line); }
+  .inkband .wrap { display: flex; flex-wrap: wrap; gap: 44px; align-items: center; padding-top: 88px; padding-bottom: 88px; }
+  .inkband .copy { flex: 1 1 480px; min-width: 0; }
+  .inkband h2 { margin: 0; font: 700 clamp(40px, 6vw, 76px)/0.95 var(--display); letter-spacing: -0.04em; }
+  .inkband p { margin: 20px 0 28px; font-size: 18px; line-height: 1.6; color: #D0D5DD; max-width: 34em; }
+  .score { flex: 1 1 300px; margin: 0; display: grid; grid-template-columns: 1fr 1fr; border: 1.5px solid #FFFFFF55; }
+  .score div { padding: 26px; border-right: 1.5px solid #FFFFFF55; }
+  .score div:last-child { border-right: 0; }
+  .score dt { font-size: 13px; color: #D0D5DD; }
+  .score dd { margin: 8px 0 0; font: 700 clamp(44px, 6vw, 72px)/1 var(--mono); font-variant-numeric: tabular-nums; }
+  .score dd.zero { color: #4CD38A; }
   .band { background: var(--band); color: #fff; }
   .band .wrap { display: flex; flex-wrap: wrap; gap: 44px; align-items: center; padding-top: 88px; padding-bottom: 88px; }
   .band h2 { margin: 0; font: 700 clamp(34px, 4.6vw, 58px)/1 var(--display); letter-spacing: -0.035em; }
@@ -191,6 +217,7 @@
     <nav aria-label="Main">
       <a href="#missions">Missions</a>
       <a href="#how">How it works</a>
+      <a href="#proof">Proof</a>
       <a href="#sealed">Security</a>
       <a href="#teams">For teams</a>
       <a href="https://github.com/Aashir01/receipts-agents">GitHub</a>
@@ -211,7 +238,7 @@
   <section class="wrap hero" aria-labelledby="hero-title">
     <div class="hero-copy">
       <h1 id="hero-title">Every answer,<br>signed twice.</h1>
-      <p class="lede">An AI agent that analyses your files and works on live websites inside a sealed sandbox on Vultr. A second, independent auditor checks its numbers, and every step prints a receipt you can replay.</p>
+      <p class="lede">A team of AI agents that does real business work inside a sealed sandbox on Vultr. Every result is signed by the machine that ran it, countersigned into a public ledger, and checked by an independent auditor. Don't trust it. Verify it.</p>
       <div class="actions">
         <a class="btn primary big" href="/workspace?tour=verify">Try it with sample data</a>
         <a class="btn line big" href="/workspace?tour=inject">Watch an attack get contained</a>
@@ -219,28 +246,32 @@
       <dl class="live" aria-label="Live record from the running system">
         <div><dt>Sandbox jobs run</dt><dd data-k="sandbox_jobs">–</dd></div>
         <div><dt>Runs verified</dt><dd class="good" data-k="runs_verified">–</dd></div>
+        <div><dt>Attacks attempted</dt><dd data-k="attacks_attempted">–</dd></div>
+        <div><dt>Attacks escaped</dt><dd class="good" data-k="attacks_escaped">–</dd></div>
         <div><dt>Fresh VMs destroyed</dt><dd data-k="fresh_vms">–</dd></div>
-        <div><dt>Containers running now</dt><dd class="good" data-k="containers_alive">–</dd></div>
       </dl>
       <p class="live-note"><span class="dot" id="sdot"></span><span id="stext">Checking the sandbox…</span></p>
     </div>
     <div class="receipt-col">
-      <div class="receipt print" role="img" aria-label="Example receipt: job in gVisor with no network and no secrets, east margin 40.81 printed and 40.812 recomputed, stamped verified">
+      <div class="receipt print" role="img" aria-label="Example receipt: job in gVisor with no network and no real secrets, eight canaries untouched, east margin 40.81 printed and 40.812 recomputed, signed by the executor and countersigned into the ledger, stamped verified">
         <div class="t">COUNTERSIGN</div>
         <div class="s">sandbox execution log</div>
         <hr>
         <div class="kv"><span>job</span><span>0bdfae979e97</span></div>
         <div class="kv"><span>runtime</span><span>gVisor</span></div>
         <div class="kv"><span>network</span><span>none</span></div>
-        <div class="kv"><span>secrets inside</span><span>0</span></div>
-        <div class="kv"><span>limits</span><span>512 MB 1 cpu 30 s</span></div>
+        <div class="kv"><span>real secrets</span><span>0</span></div>
+        <div class="kv"><span>canaries</span><span>8, untouched</span></div>
         <div class="kv"><span>container</span><span>removed</span></div>
         <hr>
         <div class="kv"><span>east margin</span><span>40.81</span></div>
         <div class="kv"><span>auditor</span><span>40.812</span></div>
+        <hr>
+        <div class="kv"><span>signed by</span><span>exec-4f2a… ✓</span></div>
+        <div class="kv"><span>countersigned</span><span>ledger #1288</span></div>
         <div class="stampwrap"><span class="stamp">VERIFIED</span></div>
       </div>
-      <p class="receipt-cap">A real receipt from the retail sample.</p>
+      <p class="receipt-cap">A receipt from the retail sample. <a href="/verify">Check any receipt yourself</a>.</p>
     </div>
   </section>
 
@@ -255,6 +286,32 @@
         <div><small>Second key: the auditor recomputed</small><b>40.812</b></div>
         <div class="verdict"><small>East region profit margin, percent</small><span>MATCH</span></div>
       </div>
+    </div>
+  </section>
+
+  <section class="wrap block" id="proof" aria-labelledby="proof-title">
+    <div class="split">
+      <h2 class="sec" id="proof-title">Proof, not promises</h2>
+      <p class="mlede">Most AI products ask you to trust them. Countersign hands you a receipt you can check without trusting us at all.</p>
+    </div>
+    <ol class="chain">
+      <li><span class="st blue">SIGNED</span><h3>By the machine that ran it</h3><p>Each executor creates an Ed25519 key in memory when it starts. It signs exactly what it ran: the script, the inputs, the printed output, every file and the image digest. The key never touches a disk, and a fresh VM's key dies with the VM.</p><code>exec-4f2a… signs job 0bdfae979e97</code></li>
+      <li><span class="st green">COUNTERSIGNED</span><h3>Into a hash-chained ledger</h3><p>The app commits every receipt to an append-only ledger on Vultr Object Storage. Each entry carries the previous entry's hash and the app's signature, so changing any old receipt breaks every link after it.</p><code>#1288 prev 9c41f0… sig app-f256…</code></li>
+      <li><span class="st red">VERIFIED</span><h3>By you, not by us</h3><p>The verifier recomputes every hash and signature in your own browser with WebCrypto. Or download the proof bundle and run a 30-line script offline, then replay the code in the same pinned image.</p><a class="btn line" href="/verify">Verify a receipt</a></li>
+    </ol>
+  </section>
+
+  <section class="inkband" id="arena" aria-labelledby="arena-title">
+    <div class="wrap">
+      <div class="copy">
+        <h2 id="arena-title">Try to break it.</h2>
+        <p>Fire 13 real attacks at the real sandbox: steal the keys, phone home, read cloud metadata, escape to the host, fork-bomb it, leave a backdoor. Or write your own prompt injection and hand it to the agent. Fake secrets are planted everywhere, so a thief gets caught, not paid. Every result is a signed receipt.</p>
+        <a class="btn primary big" href="/workspace?tour=arena">Attack the sandbox</a>
+      </div>
+      <dl class="score" aria-label="Public attack scoreboard">
+        <div><dt>Attacks attempted</dt><dd data-k="attacks_attempted">–</dd></div>
+        <div><dt>Escaped</dt><dd class="zero" data-k="attacks_escaped">–</dd></div>
+      </dl>
     </div>
   </section>
 
@@ -309,9 +366,12 @@
       <div><span class="st red">BLOCKED</span><h3>Nothing leaves</h3><p>The analysis sandbox has no network, and the executor VM holds zero secrets. Exfiltration simply fails.</p></div>
       <div><span class="st blue">HELD</span><h3>You decide the risky parts</h3><p>Code that reaches for the network or secrets, and any submit, buy or send action, pause for a human.</p></div>
       <div><span class="st red">REFUSED</span><h3>A browser on a short leash</h3><p>One allowlist proxy per task. Private and cloud-metadata addresses refused; password and card fields never filled.</p></div>
-      <div><span class="st green">REPRODUCED</span><h3>Check it yourself</h3><p>Replay any receipt in a fresh sandbox and compare the SHA-256 of every output.</p></div>
+      <div><span class="st red">TRIPPED</span><h3>Caught red-handed</h3><p>Every job is seeded with fake cloud keys, an SSH key and a database URL. Touch one and the run is quarantined, with the exact line of code on the receipt.</p></div>
+      <div><span class="st blue">MASKED</span><h3>The model never sees your customers</h3><p>Emails, phones, card numbers and names become tokens like [EMAIL_3] before any text reaches a model, and turn back into real values only on our server.</p></div>
+      <div><span class="st green">ZERO</span><h3>Blast radius, itemised</h3><p>Every run ends with what it was granted, what it actually touched, and what it tried and was refused, recorded inside the sandbox.</p></div>
+      <div><span class="st green">REPRODUCED</span><h3>Check it yourself</h3><p>Replay any receipt in a fresh sandbox and compare the SHA-256 of every output, or verify its signatures offline.</p></div>
       <div><span class="st green">DESTROYED</span><h3>A fresh server per run</h3><p>Optionally run on a never-used Vultr VM that is deleted afterwards, confirmed through the Vultr API.</p></div>
-      <div><span class="st blue">PRINTED</span><h3>A report you can hand on</h3><p>A PDF with the answer, checks, charts and every receipt, laid out inside the sandbox by a fixed script.</p></div>
+      <div><span class="st blue">ENFORCED</span><h3>Your rules, as code</h3><p>A compliance team writes a short policy once: allowed sites, export limits, which files need a fresh VM. Every run obeys it and cites its hash.</p></div>
     </div>
   </section>
 
@@ -321,6 +381,7 @@
       <a href="/workspace?tour=missions"><b>Run a business mission</b><span>Pick invoice reconciliation, load the samples, and watch the lead agent brief its team.</span><em>Open the missions</em></a>
       <a href="/workspace?tour=inject"><b>Watch a prompt injection get contained</b><span>A support ticket hides instructions to steal secrets. See what the sandbox does with them.</span><em>Open this scenario</em></a>
       <a href="/workspace?tour=verify"><b>A verified analysis with charts</b><span>Margins by region and the monthly trend, recomputed by the auditor.</span><em>Open this scenario</em></a>
+      <a href="/workspace?tour=arena"><b>Try to break the sandbox</b><span>Run 13 real attacks or write your own injection. See each one contained, signed and logged.</span><em>Open the arena</em></a>
       <a href="/workspace?tour=web"><b>Research the web in a sealed browser</b><span>Approve the sites, watch the browser work, then analyse what it found.</span><em>Open this scenario</em></a>
     </div>
   </section>
@@ -335,6 +396,8 @@
       <div><b>Human approval where it matters</b><span>Risky code, unfamiliar websites and anything that submits, buys or sends wait for a person.</span></div>
       <div><b>Isolation you can choose</b><span>A hardened shared sandbox for speed, or a never-used Vultr VM per run for maximum isolation.</span></div>
       <div><b>Accounts and private history</b><span>Supabase sign-in with row-level security; runs are private until you share a link.</span></div>
+      <div><b>Policy as code</b><span>One short YAML file sets the rules for every run on the account, and every receipt cites the policy it was held to.</span></div>
+      <div><b>A ledger auditors can check</b><span>Signed, hash-chained receipts, a public verifier, and proof bundles that verify offline.</span></div>
       <div><b>Reproducible by design</b><span>Hashes for every script, input and output, and one-click replay that compares them.</span></div>
       <div><b>An API underneath</b><span>Everything in the workspace is a documented HTTP endpoint. <a href="/docs">Open the API docs</a>.</span></div>
     </div>

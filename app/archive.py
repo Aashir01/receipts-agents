@@ -133,3 +133,53 @@ async def check(rid: str, row: dict) -> dict:
 def status() -> dict:
     return {"enabled": ENABLED, "bucket": BUCKET if ENABLED else None, "endpoint": ENDPOINT or None, **STATUS,
             "uptime_s": int(time.monotonic())}
+
+
+# ---------- small JSON helpers for the ledger, the arena counter and policies ----------
+
+def _get(key: str) -> bytes | None:
+    try:
+        return _s3().get_object(Bucket=BUCKET, Key=key)["Body"].read()
+    except Exception:  # noqa: BLE001
+        return None
+
+
+async def put_json(key: str, obj) -> bool:
+    if not ENABLED:
+        return False
+    try:
+        data = json.dumps(obj, indent=1, default=str).encode()
+        await asyncio.to_thread(_put, key, data, "application/json")
+        return True
+    except Exception as e:  # noqa: BLE001
+        STATUS["last_error"] = f"{type(e).__name__}: {str(e)[:200]}"
+        return False
+
+
+async def get_json(key: str):
+    if not ENABLED:
+        return None
+    raw = await asyncio.to_thread(_get, key)
+    if raw is None:
+        return None
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+
+
+async def put_text(key: str, text: str, content_type: str = "text/plain") -> bool:
+    if not ENABLED:
+        return False
+    try:
+        await asyncio.to_thread(_put, key, text.encode(), content_type)
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
+async def get_text(key: str) -> str | None:
+    if not ENABLED:
+        return None
+    raw = await asyncio.to_thread(_get, key)
+    return raw.decode("utf-8", "replace") if raw is not None else None

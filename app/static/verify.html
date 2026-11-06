@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Countersign verifier</title>
+<meta name="description" content="Check a Countersign receipt yourself: the executor's signature, the app's countersignature and the hash-chained ledger, verified in your own browser.">
+<script>(()=>{let t;try{t=localStorage.getItem("cs-theme")}catch(e){}if(t!=="dark"&&t!=="light")t=matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light";document.documentElement.dataset.theme=t})()</script>
+<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Familjen+Grotesk:wght@500;600;700&family=Instrument+Sans:wght@400;500;600;700&family=Courier+Prime:wght@400;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --page: #FBFBF8; --panel: #FFFFFF; --ink: #101828; --muted: #475467; --line: #D0D5DD; --blue: #1F3BFF; --blue-ink: #1529C9;
+    --stamp: #D92D20; --pass: #067647; --warn: #9A5B00; --tint: #EEF1FF;
+    --sans: "Instrument Sans", system-ui, sans-serif; --display: "Familjen Grotesk", "Instrument Sans", system-ui, sans-serif;
+    --mono: "Courier Prime", ui-monospace, monospace;
+  }
+  [data-theme="dark"] {
+    --page: #0B1020; --panel: #111830; --ink: #F2F4F8; --muted: #9AA5B8; --line: #2B3650; --blue: #3D55FF; --blue-ink: #8D9BFF;
+    --stamp: #FF7A6E; --pass: #4CD38A; --warn: #F0B34B; --tint: #1B2647;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body { background: var(--page); color: var(--ink); font: 16px/1.55 var(--sans); -webkit-font-smoothing: antialiased; }
+  a { color: var(--blue-ink); }
+  :focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 0 24px; }
+  header { border-bottom: 1.5px solid var(--ink); background: var(--page); }
+  header .wrap { display: flex; align-items: center; gap: 18px; min-height: 68px; flex-wrap: wrap; }
+  .logo { display: flex; align-items: center; gap: 10px; color: var(--ink); text-decoration: none; font: 700 22px var(--display); letter-spacing: -.03em; }
+  nav { margin-left: auto; display: flex; gap: 18px; font-weight: 500; font-size: 15px; }
+  nav a { color: var(--ink); text-decoration: none; }
+  nav a:hover { color: var(--blue); }
+  h1 { font: 700 clamp(40px, 7vw, 72px)/0.98 var(--display); letter-spacing: -.04em; margin: 48px 0 12px; }
+  .lede { font-size: 19px; color: var(--muted); max-width: 64ch; margin: 0 0 28px; }
+  form { display: flex; gap: 8px; flex-wrap: wrap; }
+  input { flex: 1 1 320px; min-height: 52px; padding: 0 14px; border: 1.5px solid var(--ink); background: var(--panel); color: var(--ink); font: 16px var(--mono); }
+  button, .btn { min-height: 52px; padding: 0 22px; border: 1.5px solid var(--blue); background: var(--blue); color: #fff; font: 600 16px var(--sans); cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; }
+  .btn.ghost, button.ghost { background: transparent; color: var(--ink); border-color: var(--ink); }
+  .btn.ghost:hover, button.ghost:hover { background: var(--ink); color: var(--page); }
+  section { margin: 40px 0; }
+  h2 { font: 700 26px var(--display); letter-spacing: -.02em; margin: 0 0 8px; }
+  .muted { color: var(--muted); }
+  .verdict { display: inline-block; margin: 20px 0 6px; font: 700 26px/1.2 var(--mono); letter-spacing: .06em; padding: 6px 14px;
+             border: 3px solid currentColor; transform: rotate(-2deg); }
+  .verdict.ok { color: var(--pass); } .verdict.no { color: var(--stamp); } .verdict.wait { color: var(--muted); }
+  .checks { list-style: none; margin: 14px 0 0; padding: 0; border-top: 1.5px solid var(--ink); }
+  .checks li { display: grid; grid-template-columns: 76px minmax(0, 1fr); gap: 2px 14px; padding: 12px 0; border-bottom: 1px dashed var(--line); }
+  .checks .m { font: 700 13px/1.5 var(--mono); letter-spacing: .05em; }
+  .checks .m.ok { color: var(--pass); } .checks .m.no { color: var(--stamp); } .checks .m.skip { color: var(--muted); }
+  .checks b { font-weight: 600; } .checks span { color: var(--muted); font-size: 14px; overflow-wrap: anywhere; }
+  .where { font: 600 13px var(--mono); color: var(--blue-ink); margin-top: 4px; }
+  details { margin-top: 12px; } summary { cursor: pointer; color: var(--blue-ink); font-weight: 500; }
+  pre { background: var(--panel); border: 1px solid var(--line); padding: 12px; overflow: auto; font: 13px/1.5 var(--mono); max-height: 420px; }
+  table { border-collapse: collapse; width: 100%; font: 13px var(--mono); }
+  th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  th { color: var(--muted); font-weight: 600; }
+  .tbl { overflow-x: auto; border: 1.5px solid var(--ink); background: var(--panel); }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-top: 12px; }
+  .key { font: 13px var(--mono); overflow-wrap: anywhere; background: var(--panel); border: 1px solid var(--line); padding: 10px 12px; }
+  .steps { margin: 0; padding-left: 20px; } .steps li { margin: 4px 0; }
+  code { font-family: var(--mono); }
+  footer { border-top: 1.5px solid var(--ink); margin-top: 60px; padding: 24px 0 40px; color: var(--muted); font-size: 14px; }
+  @media (max-width: 640px) { .wrap { padding: 0 16px; } nav { margin-left: 0; width: 100%; } .checks li { grid-template-columns: 60px minmax(0, 1fr); } }
+</style>
+</head>
+<body>
+<header><div class="wrap">
+  <a class="logo" href="/" aria-label="Countersign home">
+    <svg width="30" height="30" viewBox="0 0 64 64" aria-hidden="true"><circle cx="32" cy="32" r="27" fill="none" stroke="#1F3BFF" stroke-width="4"/><circle cx="32" cy="32" r="21" fill="none" stroke="#1F3BFF" stroke-width="1.5" stroke-dasharray="2 3"/><path d="M16 33 L23 40 L35 25" fill="none" stroke="#1F3BFF" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/><path d="M27 37 L32 42 L47 23" fill="none" stroke="#D92D20" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    countersign
+  </a>
+  <nav aria-label="Main"><a href="/workspace">Workspace</a><a href="/workspace?tour=arena">Try to break it</a><a href="https://github.com/Aashir01/receipts-agents">GitHub</a></nav>
+</div></header>
+
+<main class="wrap">
+  <h1>Don't trust us. Check it.</h1>
+  <p class="lede">Every sandbox job is signed by the machine that ran it, then countersigned into a hash-chained ledger. Paste a receipt ID and this page re-checks every signature and hash itself, in your browser, with WebCrypto. The server only hands over the data.</p>
+  <form id="f">
+    <label for="rid" style="position:absolute;left:-9999px">Receipt ID</label>
+    <input id="rid" placeholder="Receipt ID, for example 3f1c2a9e-…" autocomplete="off" spellcheck="false">
+    <button type="submit">Verify</button>
+  </form>
+  <div id="out" aria-live="polite"></div>
+
+  <section>
+    <h2>The ledger</h2>
+    <p class="muted" id="lstat">Loading…</p>
+    <div class="tbl"><table id="ltab"><thead><tr><th>#</th><th>Time (UTC)</th><th>Kind</th><th>Receipt</th><th>Signed by</th><th>Entry hash</th></tr></thead><tbody></tbody></table></div>
+    <div class="row"><button class="ghost" id="chain" type="button">Check these links in my browser</button><span class="muted" id="chainout"></span></div>
+  </section>
+
+  <section>
+    <h2>Public keys</h2>
+    <p class="muted">The app's key signs the hash of every ledger entry. Executor keys are created in memory when a runner starts and never leave that machine; a fresh VM's key dies with the VM.</p>
+    <div id="keys"></div>
+  </section>
+
+  <section>
+    <h2>Verify offline</h2>
+    <ol class="steps">
+      <li>On any receipt in the workspace, choose <b>Download proof bundle</b>.</li>
+      <li>Unzip it and run <code>pip install cryptography &amp;&amp; python verify.py . --site https://agentrush.aashirnoman.dev</code></li>
+      <li>Or replay the code yourself in the same pinned sandbox image with <code>bash replay.sh</code>.</li>
+    </ol>
+  </section>
+</main>
+<footer><div class="wrap">Countersign · every answer, signed twice · Vultr Agent Rush 2026</div></footer>
+
+<script>
+const $ = s => document.querySelector(s);
+const el = (t, c, x) => { const n = document.createElement(t); if (c) n.className = c; if (x != null) n.textContent = x; return n; };
+const enc = new TextEncoder();
+function canon(v) {                      // same bytes as Python json.dumps(sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+  if (v === null || typeof v !== "object") return JSON.stringify(v);
+  if (Array.isArray(v)) return "[" + v.map(canon).join(",") + "]";
+  return "{" + Object.keys(v).sort().map(k => JSON.stringify(k) + ":" + canon(v[k])).join(",") + "}";
+}
+const hex = buf => [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, "0")).join("");
+const sha = async s => hex(await crypto.subtle.digest("SHA-256", typeof s === "string" ? enc.encode(s) : s));
+const b64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
+let edSupported = null;
+async function edVerify(pub, sig, data) {
+  try {
+    const k = await crypto.subtle.importKey("raw", b64(pub), { name: "Ed25519" }, false, ["verify"]);
+    edSupported = true;
+    return await crypto.subtle.verify({ name: "Ed25519" }, k, b64(sig), typeof data === "string" ? enc.encode(data) : data);
+  } catch (e) { if (e.name === "NotSupportedError" || /Ed25519|algorithm/i.test(e.message)) { edSupported = false; return null; } return false; }
+}
+const entryHash = e => { const b = { ...e }; delete b.hash; delete b.app_sig; return sha(canon(b)); };
+
+async function verify(rid) {
+  const out = $("#out"); out.replaceChildren(el("p", "muted", "Fetching the proof…"));
+  const r = await fetch(`/api/receipts/${encodeURIComponent(rid)}/proof`);
+  const p = await r.json().catch(() => ({}));
+  if (!r.ok) { out.replaceChildren(el("p", "verdict no", "NOT FOUND"), el("p", null, p.detail || `HTTP ${r.status}`)); return; }
+  const keys = await (await fetch("/api/keys")).json();
+  const checks = [];
+  const add = (name, ok, detail) => checks.push([name, ok, detail]);
+  const { core, entry, prev_entry: prev, executor: ex } = p;
+  add("The receipt hashes to the digest its ledger entry committed to", (await sha(canon(core))) === entry.receipt_digest,
+      `SHA-256 of the receipt = ${entry.receipt_digest.slice(0, 24)}…`);
+  add("The ledger entry hashes correctly", (await entryHash(entry)) === entry.hash, `entry #${entry.seq}, ${entry.hash.slice(0, 24)}…`);
+  const appOk = await edVerify(keys.app.public_key, entry.app_sig, entry.hash);
+  add("The app's Ed25519 countersignature is valid", appOk, `key ${keys.app.key_id} (published at /api/keys)`);
+  if (entry.seq === 1) add("Chain link", entry.prev === "0".repeat(64), "first entry in the ledger");
+  else if (prev) add("Chain link to the previous entry", (await entryHash(prev)) === prev.hash && prev.hash === entry.prev, `entry #${prev.seq} hashes to this entry's "prev"`);
+  if (ex && ex.signed) {
+    const exOk = await edVerify(ex.pub, ex.sig, canon(ex.payload));
+    add("The machine that ran it signed it (Ed25519)", exOk && entry.executor_sig === ex.sig, `${ex.key_id} on host ${ex.payload.host}, job ${ex.payload.job_id}`);
+    add("That signature is bound into the receipt", core.executor_payload_sha256 === await sha(canon(ex.payload)), "the receipt commits to the exact signed statement");
+    if (ex.payload.kind === "run") {
+      const outs = [...(ex.payload.outputs || [])].sort((a, b) => a.name < b.name ? -1 : 1);
+      add("Signed printed output and files = this receipt", ex.payload.stdout_sha256 === core.stdout_sha256 && canon(outs) === canon(core.outputs),
+          `${core.outputs.length} file${core.outputs.length === 1 ? "" : "s"}, output SHA-256 ${core.stdout_sha256.slice(0, 16)}…`);
+      add("The code in the receipt is what was stored", core.code_sha256 === await sha(p.code || ""), `code SHA-256 ${core.code_sha256.slice(0, 16)}…`);
+    }
+  } else add("Executor signature", null, "this job ran before its executor started signing");
+  const bad = checks.filter(c => c[1] === false).length;
+  const unsupported = edSupported === false;
+  out.replaceChildren();
+  out.append(el("div", "verdict " + (bad ? "no" : unsupported ? "wait" : "ok"), bad ? "NOT VERIFIED" : unsupported ? "PARTLY CHECKED" : "VERIFIED"));
+  out.append(el("p", "muted", unsupported ? "Your browser can't check Ed25519 signatures yet, so those lines are skipped here; the hashes were checked. Use the offline script for the signatures."
+    : bad ? `${bad} check${bad === 1 ? "" : "s"} failed. Something in this receipt was changed after it was signed.`
+    : "Every hash and signature below was recomputed in this browser. Nothing here relies on the server saying so."));
+  const ul = el("ul", "checks");
+  for (const [n, ok, d] of checks) {
+    const li = el("li"); const m = el("span", "m " + (ok === true ? "ok" : ok === false ? "no" : "skip"), ok === true ? "PASS" : ok === false ? "FAIL" : "SKIP");
+    const b = el("div"); b.append(el("b", null, n)); b.append(el("br")); b.append(el("span", null, d)); li.append(m, b); ul.append(li);
+  }
+  out.append(ul, el("div", "where", "checked in your browser with WebCrypto"));
+  const row = el("div", "row");
+  const z = el("a", "btn ghost", "Download proof bundle"); z.href = `/api/receipts/${encodeURIComponent(rid)}/bundle`;
+  const s = el("a", "btn ghost", "Server's own check (JSON)"); s.href = `/api/receipts/${encodeURIComponent(rid)}/verify`; s.target = "_blank"; s.rel = "noopener";
+  row.append(z, s); out.append(row);
+  const d = el("details"); d.append(el("summary", null, "Show the signed data"));
+  d.append(el("pre", null, JSON.stringify({ receipt: core, ledger_entry: entry, executor_statement: ex && ex.payload }, null, 1)));
+  out.append(d);
+}
+
+async function ledger() {
+  const d = await (await fetch("/api/ledger?limit=20")).json();
+  $("#lstat").textContent = `${d.status.entries} receipts chained. Head ${d.status.head.slice(0, 20)}…, countersigned with ${d.status.app_key_id}.`;
+  const tb = $("#ltab tbody"); tb.replaceChildren();
+  for (const e of d.entries) {
+    const tr = el("tr"); const a = el("a", null, e.receipt_id.slice(0, 8) + "…"); a.href = `?r=${e.receipt_id}`;
+    const td = el("td"); td.append(a);
+    tr.append(el("td", null, String(e.seq)), el("td", null, e.time.replace("T", " ").replace("Z", "")), el("td", null, e.kind), td,
+      el("td", null, e.executor_key_id || "not yet"), el("td", null, e.hash.slice(0, 18) + "…"));
+    tb.append(tr);
+  }
+  $("#chain").onclick = async () => {
+    const keys = await (await fetch("/api/keys")).json();
+    const es = [...d.entries].reverse(); let bad = 0, sigs = 0;
+    for (let i = 0; i < es.length; i++) {
+      if ((await entryHash(es[i])) !== es[i].hash) bad++;
+      if (i && es[i].prev !== es[i - 1].hash) bad++;
+      const ok = await edVerify(keys.app.public_key, es[i].app_sig, es[i].hash);
+      if (ok === false) bad++; if (ok) sigs++;
+    }
+    $("#chainout").textContent = bad ? `BROKEN: ${bad} problem(s) found.` : `Intact: ${es.length} entries, every hash and link checks out${sigs ? `, ${sigs} countersignatures verified` : ""}.`;
+  };
+  const k = await (await fetch("/api/keys")).json();
+  const box = $("#keys"); box.replaceChildren();
+  box.append(el("p", null, `App countersigning key ${k.app.key_id}`), el("div", "key", k.app.public_key));
+  for (const [id, e] of Object.entries(k.executors || {})) box.append(el("p", null, `Executor ${id} (${e.machine})`), el("div", "key", e.public_key));
+}
+
+$("#f").onsubmit = e => { e.preventDefault(); const v = $("#rid").value.trim(); if (v) { history.replaceState(null, "", `?r=${v}`); verify(v); } };
+const q = new URLSearchParams(location.search).get("r");
+if (q) { $("#rid").value = q; verify(q); }
+ledger();
+</script>
+</body>
+</html>

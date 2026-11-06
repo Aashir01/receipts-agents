@@ -10,6 +10,7 @@ from pathlib import Path
 
 import archive
 import db
+import ledger
 
 
 def sha256(data: bytes) -> str:
@@ -39,7 +40,8 @@ async def save_dataset(ds: dict, owner: str | None) -> None:
     await db.upload("uploads", storage_path, data, mime_for(ds["filename"]))
     await db.insert("datasets", {
         "id": ds["id"], "owner": owner, "filename": ds["filename"], "size_bytes": ds["size"],
-        "sha256": ds["sha256"], "storage_path": storage_path, "profile": ds["profile"],
+        "sha256": ds["sha256"], "storage_path": storage_path,
+        "profile": {**ds["profile"], "_pii_values": ds.get("pii_values") or {}},
         "data_flags": ds.get("suspicious", []),
     })
 
@@ -56,9 +58,11 @@ async def load_dataset(ds_id: str, data_dir: Path) -> dict | None:
     folder.mkdir(parents=True, exist_ok=True)
     path = folder / row["filename"]
     path.write_bytes(data)
+    profile = dict(row["profile"] or {})
+    pii_values = profile.pop("_pii_values", {}) or {}
     return {"id": ds_id, "filename": row["filename"], "path": path, "size": row["size_bytes"],
-            "sha256": row["sha256"], "profile": row["profile"], "suspicious": row.get("data_flags") or [],
-            "owner": row.get("owner")}
+            "sha256": row["sha256"], "profile": profile, "suspicious": row.get("data_flags") or [],
+            "owner": row.get("owner"), "pii_values": pii_values}
 
 
 async def save_receipt(*, kind: str, code: str, result: dict, model: str | None, run_id: str | None,
@@ -83,6 +87,20 @@ async def save_receipt(*, kind: str, code: str, result: dict, model: str | None,
         "stdout_sha256": sha256(result.get("stdout", "").encode()),
         "stderr": result.get("stderr", "")[:20000], "executed_on": result.get("executed_on") or executed_on,
     }
+    # Countersign: commit the receipt to the hash-chained ledger, with the executor's signature
+    att = result.get("_attest")
+    entry = await ledger.append(row, att)
+    lim = dict(row.get("limits") or {})
+    lim["executor_signature"] = ({k: att[k] for k in ("signed", "valid", "key_id", "pub", "sig", "payload") if k in att}
+                                 if att else {"signed": False})
+    lim["ledger"] = {"seq": entry["seq"], "hash": entry["hash"]}
+    h = result.get("harness")
+    if h:
+        lim["canaries"] = {"planted": h["planted"], "tripped": h["tripped"], "trips": h["trips"][:5],
+                           "leaked_into": h["leaked_into"]}
+    row["limits"] = lim
+    result["countersign"] = {"seq": entry["seq"], "hash": entry["hash"], "receipt_id": rid,
+                             "receipt_digest": entry["receipt_digest"]}
     await db.insert("receipts", row)
     # an independent copy on Vultr Object Storage, for tamper-evident checks (never blocks the run)
     record = {k: v for k, v in row.items() if k not in ("id", "stderr")}
