@@ -770,6 +770,7 @@ function renderProfile(d) {
   const p = $("#profile"); p.replaceChildren();
   p.append(el("h3", null, d.filename));
   p.append(el("div", "meta", `${d.profile.rows.toLocaleString()} rows, ${d.profile.columns.length} columns, read inside the sandbox`));
+  if ((d.normalized || []).length) p.append(el("div", "meta", "Prepared for reading: " + d.normalized.join(" ")));
   const cols = el("div", "cols");
   for (const c of d.profile.columns) {
     const chip = el("span", "col", c.name + " ");

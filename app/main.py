@@ -28,6 +28,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 import archive
+import ingest
 import arena
 import db
 import disposable
@@ -382,7 +383,26 @@ async def samples():
             for p in sorted(SAMPLES.glob("*")) if p.suffix in ALLOWED_EXT]
 
 
+def _read_error(filename: str, stderr: str) -> str:
+    """The sandbox's traceback, as one sentence a person can act on."""
+    last = next((ln.strip() for ln in reversed(stderr.strip().splitlines()) if ln.strip()), "")
+    if "EmptyDataError" in last or "No columns to parse" in last:
+        return f"{filename} has no rows or columns to read."
+    if "ParserError" in last or "Error tokenizing" in last:
+        detail = last.split(":", 1)[-1].strip()
+        return f"{filename} isn't a consistent table ({detail}). Check for a title or notes above the header row."
+    if "BadZipFile" in last or "not a zip file" in last:
+        return f"{filename} isn't a valid Excel workbook. Save it again as .xlsx or .csv."
+    if "ValueError" in last and filename.lower().endswith(".json"):
+        return f"{filename} isn't a JSON table (an array of records). {last.split(':', 1)[-1].strip()}"
+    return f"Could not read {filename}: {last[:300] or 'the sandbox returned no output'}"
+
+
 async def _register(filename: str, data: bytes, owner: str | None = None) -> dict:
+    try:
+        filename, data, notes = ingest.normalize(filename, data)
+    except ingest.Unreadable as e:
+        raise HTTPException(400, str(e)) from None
     ds_id = str(uuid.uuid4())
     folder = DATA_DIR / ds_id
     folder.mkdir(parents=True, exist_ok=True)
@@ -394,7 +414,7 @@ async def _register(filename: str, data: bytes, owner: str | None = None) -> dic
     code = prompts.PROFILE_CODE.format(filename=filename)
     result = await run_in_sandbox(code, dataset_files(ds))
     if result["status"] != "ok":
-        raise HTTPException(400, f"Could not read file: {result['stderr'].strip().splitlines()[-1:]}")
+        raise HTTPException(400, _read_error(filename, result.get("stderr") or ""))
     try:
         ds["profile"] = json.loads(result["stdout"].strip().splitlines()[-1])
     except Exception:  # noqa: BLE001
@@ -408,7 +428,7 @@ async def _register(filename: str, data: bytes, owner: str | None = None) -> dic
     return {"dataset_id": ds_id, "filename": filename, "size": len(data), "sha256": ds["sha256"],
             "profile": ds["profile"], "profiling_receipt": receipt(code, result, None),
             "profiling_events": result["events"], "limits": result["limits"],
-            "data_scan": {"flagged": len(ds["suspicious"]), "cells": ds["suspicious"][:5]}}
+            "data_scan": {"flagged": len(ds["suspicious"]), "cells": ds["suspicious"][:5]}, "normalized": notes}
 
 
 @app.post("/api/datasets")

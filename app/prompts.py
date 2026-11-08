@@ -111,7 +111,7 @@ if low.endswith(('.xlsx', '.xls')):
 elif low.endswith('.json'):
     df = pd.read_json(name)
 else:
-    df = pd.read_csv(name, sep=None, engine='python')
+    df = pd.read_csv(name, low_memory=False)
 cols = []
 for c, t in df.dtypes.items():
     s = df[c]
