@@ -14,8 +14,10 @@ dataframe parser runs on the app server. The real parsing still happens inside t
 import csv
 import io
 import json
+import re
 
 TEXT_EXT = (".csv", ".tsv", ".txt")
+_NON_ASCII = re.compile(r"[^\x00-\x7f]")
 
 
 class Unreadable(ValueError):
@@ -39,10 +41,36 @@ def _decode(data: bytes) -> tuple[str, str]:
         return data.decode("utf-8"), "UTF-8"
     except UnicodeDecodeError:
         pass
-    try:
-        return data.decode("cp1252"), "Windows-1252"
-    except UnicodeDecodeError:
-        return data.decode("latin-1"), "Latin-1"
+    # Not UTF-8: a single-byte code page. Pick the one whose accented characters read as letters
+    # inside words (Windows-1252 for most exports, DOS 850 for old systems: byte 0x84 is "ä"
+    # there but "„" in Windows-1252).
+    best = None
+    for codec, label in (("cp1252", "Windows-1252"), ("cp850", "DOS code page 850"), ("latin-1", "Latin-1")):
+        try:
+            text = data.decode(codec)
+        except UnicodeDecodeError:
+            continue
+        score = _word_score(text)
+        if best is None or score > best[0]:
+            best = (score, text, label)
+    return best[1], best[2]
+
+
+def _word_score(text: str) -> int:
+    """+1 for each non-ASCII character that reads as a letter of the word around it, -1 otherwise."""
+    score = 0
+    for m in _NON_ASCII.finditer(text):
+        i, ch = m.start(), m.group()
+        prev = text[i - 1] if i else " "
+        nxt = text[i + 1] if i + 1 < len(text) else " "
+        if not (prev.isalpha() or nxt.isalpha()):
+            continue                                   # standalone symbol: says nothing
+        if ch.isalpha():
+            near = prev if prev.isalpha() else nxt
+            score += 2 if near.islower() == ch.islower() else 1
+        else:
+            score -= 2
+    return score
 
 
 def _columns(text: str, delim: str, rows: int = 200) -> list[int]:
